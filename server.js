@@ -555,6 +555,42 @@ app.post('/api/quiz/attempts/:userId/:lessonId/submit', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+/** AI Lesson Generator */
+app.post('/api/lesson/generate', async (req, res) => {
+    try {
+        const { keywords } = req.body;
+        if (!keywords) return res.status(400).json({ error: 'Keywords are required.' });
+
+        const systemPrompt = `
+أنت مصمم ومنشئ محتوى تعليمي تفاعلي محترف. 
+قم بإنشاء درس تفاعلي بصيغة HTML/CSS/JS متكامل، بنفس هيكل وتصميم وروح الدرس التالي (درس تحليل المعادلات). يجب أن يعتمد الدرس على موضوع: "${keywords}".
+مهم جداً: أخرج الكود فقط كصفحة HTML واضحة وبنفس ألوان الـ Dark Mode، بدون أي نصوص تمهيدية وبدون علامات التنصيص العكسية (\`\`\`html).
+
+الهيكل المطلوب:
+1. Hero Section: عنوان الدرس وإحصائيات مصغرة.
+2. المؤقت (Timer).
+3. أزرار التنقل (Phase Nav) للتنقل بين أجزاء الدرس المخفية/الظاهرة.
+4. أقسام الدرس (Phases): محتوى تفاعلي مشروح كقاعدة علمية مع رسومات بسيطة جاهزة بالـ SVG إن أمكن.
+5. التقييم السريع: قسم للأسئلة مع تعليقات فورية على الإجابة (JavaScript).
+`;
+
+        const completion = await openai.chat.completions.create({
+            model: 'gpt-4o',
+            messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: `قم بإنشاء الدرس الآن للكلمات المفتاحية: ${keywords}` }
+            ]
+        });
+
+        const reply = completion.choices[0].message.content.trim();
+        const html = reply.replace(/^```html|```$/gi, '').trim();
+        res.json({ success: true, html });
+    } catch (e) {
+        console.error('Lesson Gen Error:', e.message);
+        res.status(500).json({ error: 'تعذر توليف الدرس حالياً.' });
+    }
+});
+
 /** AI Quiz Generator for Teachers */
 app.post('/api/quiz/generate', async (req, res) => {
     try {

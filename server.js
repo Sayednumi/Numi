@@ -562,16 +562,118 @@ app.post('/api/lesson/generate', async (req, res) => {
         if (!keywords) return res.status(400).json({ error: 'Keywords are required.' });
 
         const systemPrompt = `
-أنت مصمم ومنشئ محتوى تعليمي تفاعلي محترف. 
-قم بإنشاء درس تفاعلي بصيغة HTML/CSS/JS متكامل، بنفس هيكل وتصميم وروح الدرس التالي (درس تحليل المعادلات). يجب أن يعتمد الدرس على موضوع: "${keywords}".
-مهم جداً: أخرج الكود فقط كصفحة HTML واضحة وبنفس ألوان الـ Dark Mode، بدون أي نصوص تمهيدية وبدون علامات التنصيص العكسية (\`\`\`html).
+أنت مصمم ومنشئ محتوى تعليمي تفاعلي محترف.
+مهمتك هي إنشاء درس تفاعلي بصيغة HTML متكاملة ليعمل داخل iframe في منصة تعتمد على النمط المظلم (Dark Mode / Cosmic Theme).
+عليك إنشاء المحتوى التعليمي للدرس بناءً على الموضوع المطلوب، ثم دمج هذا المحتوى داخل قالب الـ HTML المبين أدناه.
 
-الهيكل المطلوب:
-1. Hero Section: عنوان الدرس وإحصائيات مصغرة.
-2. المؤقت (Timer).
-3. أزرار التنقل (Phase Nav) للتنقل بين أجزاء الدرس المخفية/الظاهرة.
-4. أقسام الدرس (Phases): محتوى تفاعلي مشروح كقاعدة علمية مع رسومات بسيطة جاهزة بالـ SVG إن أمكن.
-5. التقييم السريع: قسم للأسئلة مع تعليقات فورية على الإجابة (JavaScript).
+موضوع الدرس المطلوب: "${keywords}"
+
+يجب أن تقوم بملء الهيكل التالي بالبيانات التعليمية (الشرح، الأمثلة، التدريبات) وتخرج كود HTML كاملاً فقط (بدون أي نصوص خارج الكود، وبدون علامات \`\`\`html):
+
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap');
+:root {
+  --bg: #0b1220; --surface: #111827; --card: #1a2436; --card2: #1e2d45;
+  --accent: #38bdf8; --accent2: #fb923c; --accent3: #34d399; --accent4: #a78bfa; --accent5: #f472b6;
+  --gold: #fbbf24; --text: #e2e8f0; --muted: #94a3b8;
+  --border: rgba(56,189,248,0.12); --border2: rgba(255,255,255,0.06);
+}
+* { margin:0; padding:0; box-sizing:border-box; font-family: 'Cairo', sans-serif; }
+body { background: var(--bg); color: var(--text); padding: 20px; line-height: 1.6; }
+.card { background: var(--card); border-radius: 16px; padding: 24px; margin-bottom: 24px; border: 1px solid var(--border); box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+.hero { text-align: center; margin-bottom: 30px; padding: 20px; background: linear-gradient(135deg, var(--card), var(--card2)); border-radius: 16px; border: 1px solid var(--border); }
+.hero h1 { color: var(--accent); margin-bottom: 10px; font-weight: 900; }
+.phase-nav { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; justify-content: center; }
+.phase-btn { padding: 12px 24px; font-weight: 700; background: var(--surface); color: var(--muted); border: 1px solid var(--border2); border-radius: 12px; cursor: pointer; transition: 0.3s; }
+.phase-btn:hover { background: rgba(255,255,255,0.05); }
+.phase-btn.active { background: rgba(56,189,248,0.15); color: var(--accent); border-color: var(--accent); }
+.phase-content { display: none; animation: fadeIn 0.4s ease; }
+.phase-content.active { display: block; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+.math-box { background: rgba(0,0,0,0.4); padding: 15px; border-radius: 8px; font-size: 1.2rem; color: var(--accent3); text-align: center; margin: 15px 0; border-right: 4px solid var(--accent3); }
+h2 { color: var(--accent2); margin-bottom: 15px; font-weight: 800; }
+h3 { color: var(--accent4); margin-top: 15px; font-weight: 700; }
+.quiz-option { display: block; width: 100%; text-align: right; padding: 15px; margin-bottom: 10px; background: var(--surface); border: 1px solid var(--border2); border-radius: 8px; cursor: pointer; transition: 0.3s; color: white; font-size: 1rem; }
+.quiz-option:hover { background: var(--border2); }
+.quiz-option.correct { background: rgba(52, 211, 153, 0.2); border-color: var(--accent3); color: var(--accent3); }
+.quiz-option.wrong { background: rgba(248, 113, 113, 0.2); border-color: #f87171; color: #f87171; }
+.feedback { margin-top: 10px; font-weight: bold; display: none; padding: 10px; border-radius: 8px; }
+.feedback.success { display: block; background: rgba(52,211,153,0.1); color: var(--accent3); }
+.feedback.error { display: block; background: rgba(248,113,113,0.1); color: #f87171; }
+</style>
+</head>
+<body>
+<div class="hero">
+  <h1>[عنوان الدرس الرائع هنا بناءً على المدخلات]</h1>
+  <p style="color: var(--muted);">[مقدمة مشوقة وقصيرة جداً لجذب انتباه الطالب]</p>
+</div>
+
+<div class="phase-nav">
+  <button class="phase-btn active" onclick="showPhase(1)">1️⃣ الشرح المبسط</button>
+  <button class="phase-btn" onclick="showPhase(2)">2️⃣ أمثلة محلولة</button>
+  <button class="phase-btn" onclick="showPhase(3)">3️⃣ اختبر نفسك</button>
+</div>
+
+<div id="phase1" class="phase-content active card">
+  <h2>الشرح الأساسي والمفاهيم</h2>
+  <p>[قم بصياغة الشرح هنا بطريقة سردية وممتعة، استخدم القوائم أو فقرات قصيرة]</p>
+  <div class="math-box">[ضع قاعدة رياضية أو علمية هنا إن وجدت]</div>
+</div>
+
+<div id="phase2" class="phase-content card">
+  <h2>أمثلة خطوة بخطوة</h2>
+  <!-- أضف 2 أو 3 أمثلة قوية ومحلولة بالتفصيل مع تلوين الخطوات إن أمكن -->
+</div>
+
+<div id="phase3" class="phase-content card">
+  <h2>تحدي المعرفة السريع</h2>
+  <!-- أضف سؤال تفاعلي أو سؤالين بحيث عندما يضغط الطالب يتم تقييم الإجابة وعرض رسالة نجاح أو خطأ -->
+  <div id="q1">
+      <p style="margin-bottom:15px; font-weight:bold; font-size:1.1rem;">[نص السؤال التفاعلي التفكير هنا]</p>
+      <button class="quiz-option" onclick="checkAnswer(this, false, 'q1')">[خيار خاطئ]</button>
+      <button class="quiz-option" onclick="checkAnswer(this, true, 'q1')">[الخيار الصحيح]</button>
+      <button class="quiz-option" onclick="checkAnswer(this, false, 'q1')">[خيار خاطئ آخر]</button>
+      <div class="feedback" id="feedback-q1"></div>
+  </div>
+</div>
+
+<script>
+function showPhase(num) {
+  document.querySelectorAll('.phase-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.phase-btn').forEach(el => el.classList.remove('active'));
+  document.getElementById('phase' + num).classList.add('active');
+  document.querySelectorAll('.phase-btn')[num-1].classList.add('active');
+}
+
+function checkAnswer(btn, isCorrect, qId) {
+  const container = document.getElementById(qId);
+  const options = container.querySelectorAll('.quiz-option');
+  options.forEach(opt => {
+      opt.disabled = true;
+      opt.style.cursor = 'not-allowed';
+      if(opt.getAttribute('onclick').includes('true')) opt.classList.add('correct');
+  });
+  
+  const feedback = document.getElementById('feedback-' + qId);
+  if (isCorrect) {
+      feedback.className = 'feedback success';
+      feedback.innerHTML = 'إجابة رائعة! 🎉 [أضف تفسير قصير للإجابة في القالب]';
+  } else {
+      btn.classList.add('wrong');
+      feedback.className = 'feedback error';
+      feedback.innerHTML = 'حاول مرة أخرى! 🤔 [أضف توضيح للخطأ]';
+  }
+}
+</script>
+</body>
+</html>
+
+يجب أن تولد الكود أعلاه مستعيضاً عن الأقواس المربعة [...] بمحتوى حقيقي ومفصل متعلق بـ: "${keywords}".
+اجعل الشرح غنياً، وأضف تفاعلات مفيدة ومحتوى غني وأمثلة واضحة وأسئلة تفاعلية حقيقية تعمل بـ JS.
 `;
 
         const completion = await openai.chat.completions.create({

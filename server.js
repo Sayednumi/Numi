@@ -620,40 +620,25 @@ h3 { color: var(--accent4); margin-top: 15px; font-weight: 700; }
 
 <div id="phase1" class="phase-content active card">
   <h2>الشرح الأساسي والمفاهيم</h2>
-  <div style="background: rgba(0,0,0,0.2); padding: 15px; border-radius: 10px; margin-bottom: 20px;">
-    <p>[أضف هنا شرحاً تفصيلياً وممتعاً يغطي المفهوم خطوة بخطوة للطلاب بطريقة شيقة ومبسطة، مع تقسيم الفقرات واستخدام القوائم]</p>
-  </div>
-  <!-- يرجى التكرم بتصميم رسومات توضيحية ونماذج بصرية معبرة باستخدام (SVG) لشرح فكرة الدرس بشكل عملي وجميل -->
-  <div style="text-align:center; margin:30px 0; padding:20px; background:rgba(0,0,0,0.3); border-radius:15px; border:1px dashed var(--accent);">
-      [كود الـ SVG الخاص بالنماذج التوضيحية والرسوم البيانية هنا]
-  </div>
-  <div class="math-box">[أضف أهم القواعد أو المعادلات المستخدمة بطريقة تشد الانتباه هنا]</div>
+  <p>[قم بصياغة الشرح هنا بطريقة سردية وممتعة، استخدم القوائم أو فقرات قصيرة]</p>
+  <div class="math-box">[ضع قاعدة رياضية أو علمية هنا إن وجدت]</div>
 </div>
 
 <div id="phase2" class="phase-content card">
-  <h2>أمثلة محلولة ونماذج تطبيقية</h2>
-  <!-- يرجى تقديم حوالي 5 أمثلة محلولة بالتفصيل لمساعدة الطالب على الفهم. -->
-  <div style="padding: 15px; border-right: 3px solid var(--accent); background: rgba(56,189,248,0.05); margin-bottom: 15px; border-radius: 8px;">
-    <h3>مثال 1: [عنوان المثال]</h3>
-    <p style="color:var(--accent2); margin-bottom:10px;">السؤال: [نص السؤال بالتفصيل]</p>
-    <div>[شرح خطوات الحل خطوة بخطوة بشكل متسلسل، مع استخدام التنسيق الجيد، وتظليل النتيجة النهائية]</div>
-  </div>
-  <!-- كرر الأمثلة لتصل إلى 5 أمثلة منوعة تغطي كافة أفكار الدرس -->
+  <h2>أمثلة خطوة بخطوة</h2>
+  <!-- أضف 2 أو 3 أمثلة قوية ومحلولة بالتفصيل مع تلوين الخطوات إن أمكن -->
 </div>
 
 <div id="phase3" class="phase-content card">
-  <h2>تحدي المعرفة السريع (اختبر نفسك)</h2>
-  <p style="margin-bottom: 20px; color: var(--muted);">أجب عن الأسئلة التالية للتأكد من استيعابك الكامل للدرس. بالتوفيق!</p>
-  <!-- يرجى إضافة 5 أسئلة تفاعلية تعمل بـ JS (تأكد من إعطاء id مختلف لكل سؤال: q1, q2, q3, q4, q5) -->
-  <div id="q1" style="margin-bottom: 30px; padding-bottom: 15px; border-bottom: 1px solid var(--border2);">
-      <p style="margin-bottom:15px; font-weight:bold; font-size:1.1rem;">1. [نص السؤال التفاعلي الأول]</p>
+  <h2>تحدي المعرفة السريع</h2>
+  <!-- أضف سؤال تفاعلي أو سؤالين بحيث عندما يضغط الطالب يتم تقييم الإجابة وعرض رسالة نجاح أو خطأ -->
+  <div id="q1">
+      <p style="margin-bottom:15px; font-weight:bold; font-size:1.1rem;">[نص السؤال التفاعلي التفكير هنا]</p>
       <button class="quiz-option" onclick="checkAnswer(this, false, 'q1')">[خيار خاطئ]</button>
       <button class="quiz-option" onclick="checkAnswer(this, true, 'q1')">[الخيار الصحيح]</button>
       <button class="quiz-option" onclick="checkAnswer(this, false, 'q1')">[خيار خاطئ آخر]</button>
-      <button class="quiz-option" onclick="checkAnswer(this, false, 'q1')">[خيار خاطئ رابع استيعابي]</button>
       <div class="feedback" id="feedback-q1"></div>
   </div>
-  <!-- كرر هيكل السؤال لـ q2, q3, q4 و q5 -->
 </div>
 
 <script>
@@ -687,16 +672,8 @@ function checkAnswer(btn, isCorrect, qId) {
 </body>
 </html>
 
-فضلاً، قم بمساعدتي في توليد محتوى الدرس استناداً إلى الكلمات المفتاحية: "${keywords}".
-أرجو أن تعتمد على الهيكل البرمجي (HTML) الموضح أعلاه، مع استبدال النصوص بين الأقواس المربعة [...] بمحتوى تعليمي مفيد ومفصل للطلاب.
-
-لجعل الدرس مثالياً، يُفضل جداً:
-1. أن يكون الشرح وافياً وممتعاً كأنك معلم يجلس مع الطالب ويشرح له بهدوء خطوة بخطوة.
-2. استخدام كود SVG لإنشاء نماذج ورسومات توضيحية تجمّل الدرس وتسهل الفهم البصري.
-3. توفير حوالي 5 أمثلة محلولة بتفصيل مع توضيح خطوات الحل، ليتمكن الطالب من القياس عليها.
-4. ختام الدرس بـ 5 أسئلة تفاعلية مفيدة.
-
-تذكر أنني أحتاج إلى كود HTML الصافي الذي يمكنني عرضه مباشرة كصفحة ويب. شكراً لمساعدتك!
+يجب أن تولد الكود أعلاه مستعيضاً عن الأقواس المربعة [...] بمحتوى حقيقي ومفصل متعلق بـ: "${keywords}".
+اجعل الشرح غنياً، وأضف تفاعلات مفيدة ومحتوى غني وأمثلة واضحة وأسئلة تفاعلية حقيقية تعمل بـ JS.
 `;
 
         const completion = await openai.chat.completions.create({

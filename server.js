@@ -620,25 +620,37 @@ h3 { color: var(--accent4); margin-top: 15px; font-weight: 700; }
 
 <div id="phase1" class="phase-content active card">
   <h2>الشرح الأساسي والمفاهيم</h2>
-  <p>[قم بصياغة الشرح هنا بطريقة سردية وممتعة، استخدم القوائم أو فقرات قصيرة]</p>
-  <div class="math-box">[ضع قاعدة رياضية أو علمية هنا إن وجدت]</div>
+  <div style="background: rgba(0,0,0,0.2); padding: 15px; border-radius: 10px; margin-bottom: 20px;">
+    <p>[شرح تفصيلي وغني جداً يشرح المفهوم كاملاً من الصفر بطريقة شيقة ومبسطة، مع تقسيم الفقرات ليسهل القراءة]</p>
+  </div>
+  <!-- أضف رسومات SVG بسيطة وجميلة لتوضيح الفكرة (إن أمكن)، أو استخدم الجداول أو التنسيقات لتوضيح المقارنات -->
+  <div class="math-box">[أضف أهم القواعد أو المعادلات المستخدمة في هذا الدرس بشكل بارز وملفت]</div>
 </div>
 
 <div id="phase2" class="phase-content card">
   <h2>أمثلة خطوة بخطوة</h2>
-  <!-- أضف 2 أو 3 أمثلة قوية ومحلولة بالتفصيل مع تلوين الخطوات إن أمكن -->
+  <!-- يجب أن تضيف هنا ما بين 3 إلى 5 أمثلة محلولة بالتفصيل الشديد.
+       كل مثال يجب أن يحتوي على: نص السؤال، ثم الحل خطوة بخطوة، ثم النتيجة النهائية في مربع مميز. -->
+  <div style="padding: 15px; border-right: 3px solid var(--accent); background: rgba(56,189,248,0.05); margin-bottom: 15px; border-radius: 8px;">
+    <h3>مثال 1: [عنوان المثال]</h3>
+    <p>[شرح مفصل لطريقة الحل خطوة بخطوة]</p>
+  </div>
+  <!-- كرر الأمثلة لتصل إلى 3 أمثلة على الأقل -->
 </div>
 
 <div id="phase3" class="phase-content card">
   <h2>تحدي المعرفة السريع</h2>
-  <!-- أضف سؤال تفاعلي أو سؤالين بحيث عندما يضغط الطالب يتم تقييم الإجابة وعرض رسالة نجاح أو خطأ -->
-  <div id="q1">
-      <p style="margin-bottom:15px; font-weight:bold; font-size:1.1rem;">[نص السؤال التفاعلي التفكير هنا]</p>
+  <p style="margin-bottom: 20px; color: var(--muted);">أجب عن الأسئلة التالية للتأكد من فهمك للدرس:</p>
+  <!-- أضف من 3 إلى 5 أسئلة تفاعلية حقيقية تعمل بـ JS (تأكد من تغيير الـ id لكل سؤال مثل q1, q2, q3) -->
+  <div id="q1" style="margin-bottom: 30px; padding-bottom: 15px; border-bottom: 1px solid var(--border2);">
+      <p style="margin-bottom:15px; font-weight:bold; font-size:1.1rem;">1. [نص السؤال التفاعلي الأول]</p>
       <button class="quiz-option" onclick="checkAnswer(this, false, 'q1')">[خيار خاطئ]</button>
       <button class="quiz-option" onclick="checkAnswer(this, true, 'q1')">[الخيار الصحيح]</button>
       <button class="quiz-option" onclick="checkAnswer(this, false, 'q1')">[خيار خاطئ آخر]</button>
+      <button class="quiz-option" onclick="checkAnswer(this, false, 'q1')">[خيار خاطئ رابع استيعابي]</button>
       <div class="feedback" id="feedback-q1"></div>
   </div>
+  <!-- كرر هيكل السؤال لـ q2, q3, q4 و q5 -->
 </div>
 
 <script>
@@ -673,7 +685,8 @@ function checkAnswer(btn, isCorrect, qId) {
 </html>
 
 يجب أن تولد الكود أعلاه مستعيضاً عن الأقواس المربعة [...] بمحتوى حقيقي ومفصل متعلق بـ: "${keywords}".
-اجعل الشرح غنياً، وأضف تفاعلات مفيدة ومحتوى غني وأمثلة واضحة وأسئلة تفاعلية حقيقية تعمل بـ JS.
+اجعل الشرح غنياً جداً وتفصيلياً، استخدم أشكال ورسومات الـ SVG إن أمكن لتسهيل الشرح، ووفر 4 أمثلة محلولة على الأقل بشرح خطوة بخطوة، ثم اختم بـ 4 أسئلة تفاعلية لاختبار الطالب.
+تذكر أن المُخرج النهائي يجب أن يكون كود HTML فقط ويعمل بالكامل.
 `;
 
         const completion = await openai.chat.completions.create({

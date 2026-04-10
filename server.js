@@ -138,19 +138,6 @@ const PrivateChatSchema = new mongoose.Schema({
 }, { timestamps: true });
 const PrivateChat = mongoose.model('PrivateChat', PrivateChatSchema);
 
-// LiveClass: for managing real-time sessions
-const LiveClassSchema = new mongoose.Schema({
-    teacherId:  { type: String, required: true },
-    groupId:    { type: String, required: true },
-    title:      { type: String, required: true },
-    link:       { type: String, required: true },
-    date:       { type: String, required: true },
-    time:       { type: String, required: true },
-    duration:   { type: Number, required: true },
-    status:     { type: String, default: 'Scheduled' } // 'Scheduled' | 'Live' | 'Finished'
-}, { timestamps: true });
-const LiveClass = mongoose.model('LiveClass', LiveClassSchema);
-
 // TeacherPlatform: helper platforms saved per teacher/admin
 const TeacherPlatformSchema = new mongoose.Schema({
   name:      { type: String, required: true },

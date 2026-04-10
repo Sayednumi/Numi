@@ -138,6 +138,46 @@ const PrivateChatSchema = new mongoose.Schema({
 }, { timestamps: true });
 const PrivateChat = mongoose.model('PrivateChat', PrivateChatSchema);
 
+// TeacherPlatform: helper platforms saved per teacher/admin
+const TeacherPlatformSchema = new mongoose.Schema({
+  name:      { type: String, required: true },
+  url:       { type: String, required: true },
+  teacherId: { type: String, required: true }
+}, { timestamps: true });
+const TeacherPlatform = mongoose.model('TeacherPlatform', TeacherPlatformSchema);
+
+// ─── TEACHER PLATFORMS ROUTES ─────────────────────────────────────────────────
+
+/** GET /api/teacher-platforms?teacherId=xxx → get platforms for a teacher */
+app.get('/api/teacher-platforms', async (req, res) => {
+  try {
+    const { teacherId } = req.query;
+    if (!teacherId) return res.status(400).json({ success: false, msg: 'teacherId مطلوب.' });
+    const platforms = await TeacherPlatform.find({ teacherId }).sort({ createdAt: 1 });
+    res.json({ success: true, platforms });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/** POST /api/teacher-platforms → add new platform */
+app.post('/api/teacher-platforms', async (req, res) => {
+  try {
+    const { name, url, teacherId } = req.body;
+    if (!name || !url || !teacherId)
+      return res.status(400).json({ success: false, msg: 'name و url و teacherId مطلوبة.' });
+    const platform = new TeacherPlatform({ name, url, teacherId });
+    await platform.save();
+    res.json({ success: true, platform });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/** DELETE /api/teacher-platforms/:id → delete platform */
+app.delete('/api/teacher-platforms/:id', async (req, res) => {
+  try {
+    await TeacherPlatform.findByIdAndDelete(req.params.id);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ─── Native Chat Logic (WebSockets) ──────────────────────────────────────────
 io.on('connection', (socket) => {
     socket.on('join', (room) => {

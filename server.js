@@ -338,6 +338,15 @@ app.put('/api/users/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+/** GET  /api/users/:id      → get single user by custom `id` field (for session verification) */
+app.get('/api/users/:id', async (req, res) => {
+  try {
+    const user = await User.findOne({ id: req.params.id }).select('-password -deviceId');
+    if (!user) return res.status(404).json({ success: false, msg: 'المستخدم غير موجود.' });
+    res.json(user.toObject());
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 /** DELETE /api/users/:id   → delete user by custom `id` field */
 app.delete('/api/users/:id', async (req, res) => {
   try {

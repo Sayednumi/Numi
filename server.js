@@ -84,7 +84,8 @@ const UserSchema = new mongoose.Schema({
   school:           { type: String, default: '' },
   dob:              { type: String, default: '' },
   avatar:           { type: String, default: '' },
-  permissions:      { type: mongoose.Schema.Types.Mixed, default: {} }
+  permissions:      { type: mongoose.Schema.Types.Mixed, default: {} },
+  liveStats:        { type: mongoose.Schema.Types.Mixed, default: { totalSessions: 0, completedSessions: 0 } }
 }, { timestamps: true });
 const User = mongoose.model('User', UserSchema);
  
@@ -145,6 +146,20 @@ const TeacherPlatformSchema = new mongoose.Schema({
   teacherId: { type: String, required: true }
 }, { timestamps: true });
 const TeacherPlatform = mongoose.model('TeacherPlatform', TeacherPlatformSchema);
+
+// LiveClass: tracks live classes linked to a group
+const LiveClassSchema = new mongoose.Schema({
+  teacherId: { type: String, required: true },
+  classId:   { type: String, required: true },
+  groupId:   { type: String, required: true },
+  title:     { type: String, required: true },
+  link:      { type: String, required: true },
+  date:      { type: String, required: true },
+  time:      { type: String, required: true },
+  duration:  { type: Number, required: true },
+  status:    { type: String, default: 'scheduled' } // 'scheduled', 'live', 'finished'
+}, { timestamps: true });
+const LiveClass = mongoose.model('LiveClass', LiveClassSchema);
 
 // ─── TEACHER PLATFORMS ROUTES ─────────────────────────────────────────────────
 
@@ -238,6 +253,49 @@ app.post('/api/platform-data', async (req, res) => {
       doc.markModified('data');
     }
     await doc.save();
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── LIVE CLASSES ROUTES ──────────────────────────────────────────────────────
+
+/** GET /api/live-classes?teacherId=X&groupId=Y */
+app.get('/api/live-classes', async (req, res) => {
+  try {
+    const { teacherId, groupId } = req.query;
+    let query = {};
+    if (teacherId) query.teacherId = teacherId;
+    if (groupId) query.groupId = groupId;
+    
+    // Auto-update status logic based on date/time logic can optionally be placed here,
+    // or just parsed by the frontend. We will return them as-is.
+    const classes = await LiveClass.find(query).sort({ date: 1, time: 1 });
+    res.json({ success: true, liveClasses: classes });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/** POST /api/live-classes */
+app.post('/api/live-classes', async (req, res) => {
+  try {
+    const liveClass = new LiveClass(req.body);
+    await liveClass.save();
+    res.json({ success: true, liveClass });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/** PUT /api/live-classes/:id */
+app.put('/api/live-classes/:id', async (req, res) => {
+  try {
+    const liveClass = await LiveClass.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    if (!liveClass) return res.status(404).json({ success: false, msg: 'الحصة غير موجودة' });
+    res.json({ success: true, liveClass });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/** DELETE /api/live-classes/:id */
+app.delete('/api/live-classes/:id', async (req, res) => {
+  try {
+    await LiveClass.findByIdAndDelete(req.params.id);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

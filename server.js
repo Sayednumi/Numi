@@ -147,6 +147,17 @@ const TeacherPlatformSchema = new mongoose.Schema({
 }, { timestamps: true });
 const TeacherPlatform = mongoose.model('TeacherPlatform', TeacherPlatformSchema);
 
+// Notification
+const NotificationSchema = new mongoose.Schema({
+  userId:  { type: String, required: true, index: true },
+  title:   { type: String, required: true },
+  details: { type: String, required: true },
+  type:    { type: String, required: true }, // 'video', 'file', 'lesson'
+  link:    { type: String, default: '' },
+  isRead:  { type: Boolean, default: false }
+}, { timestamps: true });
+const Notification = mongoose.model('Notification', NotificationSchema);
+
 // LiveClass: tracks live classes linked to a group
 const LiveClassSchema = new mongoose.Schema({
   teacherId: { type: String, required: true },
@@ -516,8 +527,57 @@ app.delete('/api/chat/:type/:msgId', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ─── NOTIFICATIONS API ────────────────────────────────────────────────────────
 
+app.post('/api/notifications/notify-group', async (req, res) => {
+    try {
+        const { group_id, title, type, link } = req.body;
+        if (!group_id || !title) return res.status(400).json({ success: false, msg: 'Missing parameters.' });
 
+        const users = await User.find({ groupId: group_id });
+        if (!users || users.length === 0) return res.json({ success: true, count: 0 });
+
+        const notifications = users.map(user => ({
+            userId: user.id,
+            title: 'تم إضافة محتوى جديد',
+            details: title,
+            type: type || 'lesson',
+            link: link || '',
+            isRead: false
+        }));
+
+        await Notification.insertMany(notifications);
+
+        users.forEach(user => {
+            io.to(user.id).emit('new_notification', {
+                title: 'تم إضافة محتوى جديد',
+                details: title,
+                type: type || 'lesson',
+                link: link || '',
+                createdAt: new Date()
+            });
+        });
+
+        res.json({ success: true, count: users.length });
+    } catch (e) {
+        console.error('Notify Group Error:', e.message);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.get('/api/notifications/:userId', async (req, res) => {
+    try {
+        const notifications = await Notification.find({ userId: req.params.userId }).sort({ createdAt: -1 }).limit(50);
+        res.json({ success: true, notifications });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/notifications/:id/read', async (req, res) => {
+    try {
+        await Notification.findByIdAndUpdate(req.params.id, { isRead: true });
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
 /** PUT  /api/users/:id/reset-device  → clear deviceId lock */
 app.put('/api/users/:id/reset-device', async (req, res) => {
   try {

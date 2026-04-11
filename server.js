@@ -1071,6 +1071,20 @@ app.get('/api/admin/reports/:lessonId', async (req, res) => {
 });
 
 
+/** ADMIN: Reset quiz attempts for a student on a lesson */
+app.delete('/api/admin/reports/:lessonId/user/:userId', async (req, res) => {
+    try {
+        const { lessonId, userId } = req.params;
+        // Delete all attempts of this user for this lesson
+        const result = await QuizAttempt.deleteMany({ lessonId, userId });
+        console.log(`Reset quiz: deleted ${result.deletedCount} attempts for user ${userId} on lesson ${lessonId}`);
+        res.json({ success: true, deletedCount: result.deletedCount });
+    } catch (e) {
+        console.error('Reset quiz error:', e);
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
   console.log(`🚀 Numi Backend running with WebSockets → http://localhost:${PORT}`);

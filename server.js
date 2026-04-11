@@ -172,6 +172,19 @@ const LiveClassSchema = new mongoose.Schema({
 }, { timestamps: true });
 const LiveClass = mongoose.model('LiveClass', LiveClassSchema);
 
+// GameZone schema
+const GameSchema = new mongoose.Schema({
+  teacherId: { type: String, required: true },
+  groupId:   { type: String, required: true },
+  title:     { type: String, required: true },
+  type:      { type: String, required: true }, // 'internal' | 'external'
+  url:       { type: String, default: '' }, // external
+  questions: { type: [mongoose.Schema.Types.Mixed], default: [] }, // internal
+  playsCount:{ type: Number, default: 0 },
+  isActive:  { type: Boolean, default: true }
+}, { timestamps: true });
+const Game = mongoose.model('Game', GameSchema);
+
 // ─── TEACHER PLATFORMS ROUTES ─────────────────────────────────────────────────
 
 /** GET /api/teacher-platforms?teacherId=xxx → get platforms for a teacher */
@@ -307,6 +320,66 @@ app.put('/api/live-classes/:id', async (req, res) => {
 app.delete('/api/live-classes/:id', async (req, res) => {
   try {
     await LiveClass.findByIdAndDelete(req.params.id);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── GAME ZONE ROUTES ────────────────────────────────────────────────────────
+
+app.get('/api/games', async (req, res) => {
+  try {
+    const { teacherId, groupId } = req.query;
+    let query = {};
+    if (teacherId) query.teacherId = teacherId;
+    if (groupId) query.groupId = groupId;
+    const games = await Game.find(query).sort({ createdAt: -1 });
+    res.json({ success: true, games });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/games', async (req, res) => {
+  try {
+    const game = new Game(req.body);
+    await game.save();
+    
+    // Notify students about the new game
+    try {
+      const users = await User.find({ groupId: game.groupId });
+      if (users && users.length > 0) {
+        const notifications = users.map(user => ({
+            userId: user.id,
+            title: 'لعبة جديدة تمت إضافتها',
+            details: game.title,
+            type: 'game',
+            link: '',
+            isRead: false
+        }));
+        await Notification.insertMany(notifications);
+        users.forEach(user => {
+            io.to(user.id).emit('new_notification', {
+                title: 'لعبة جديدة تمت إضافتها',
+                details: game.title,
+                type: 'game',
+                createdAt: new Date()
+            });
+        });
+      }
+    } catch(err) { console.error('Game notification error', err); }
+
+    res.json({ success: true, game });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/games/:id', async (req, res) => {
+  try {
+    const game = await Game.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    res.json({ success: true, game });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/games/:id', async (req, res) => {
+  try {
+    await Game.findByIdAndDelete(req.params.id);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

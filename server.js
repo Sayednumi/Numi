@@ -85,7 +85,8 @@ const UserSchema = new mongoose.Schema({
   dob:              { type: String, default: '' },
   avatar:           { type: String, default: '' },
   permissions:      { type: mongoose.Schema.Types.Mixed, default: {} },
-  liveStats:        { type: mongoose.Schema.Types.Mixed, default: { totalSessions: 0, completedSessions: 0 } }
+  liveStats:        { type: mongoose.Schema.Types.Mixed, default: { totalSessions: 0, completedSessions: 0 } },
+  quizResets:       { type: mongoose.Schema.Types.Mixed, default: {} } // lessonId -> { allowedUntil, resetAt }
 }, { timestamps: true });
 const User = mongoose.model('User', UserSchema);
  
@@ -1071,17 +1072,76 @@ app.get('/api/admin/reports/:lessonId', async (req, res) => {
 });
 
 
-/** ADMIN: Reset quiz attempts for a student on a lesson */
+/** ADMIN: Reset quiz attempts for a student on a lesson + set 2-day deadline */
 app.delete('/api/admin/reports/:lessonId/user/:userId', async (req, res) => {
     try {
         const { lessonId, userId } = req.params;
-        // Delete all attempts of this user for this lesson
+        const days = parseInt(req.query.days) || 2;
+        const deadline = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+
+        // 1) Delete all their attempts for this lesson
         const result = await QuizAttempt.deleteMany({ lessonId, userId });
-        console.log(`Reset quiz: deleted ${result.deletedCount} attempts for user ${userId} on lesson ${lessonId}`);
-        res.json({ success: true, deletedCount: result.deletedCount });
+        console.log(`Reset quiz: deleted ${result.deletedCount} attempts for user ${userId}`);
+
+        // 2) Store reset window in the user document (try ObjectId first, then phone)
+        const resetField = `quizResets.${lessonId.replace(/\./g, '_')}`;
+        const resetValue = { allowedUntil: deadline, resetAt: new Date(), days };
+        let updated = false;
+
+        // Try as ObjectId
+        try {
+            if (userId.length === 24) {
+                const u = await User.findByIdAndUpdate(
+                    userId,
+                    { $set: { [resetField]: resetValue } },
+                    { new: true, upsert: false }
+                );
+                if (u) updated = true;
+            }
+        } catch(e) {}
+
+        // Fallback: try by phone
+        if (!updated) {
+            await User.findOneAndUpdate(
+                { phone: userId },
+                { $set: { [resetField]: resetValue } }
+            );
+        }
+
+        res.json({ success: true, deletedCount: result.deletedCount, deadline, days });
     } catch (e) {
         console.error('Reset quiz error:', e);
         res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+/** STUDENT: Check quiz reset window */
+app.get('/api/quiz-reset-check/:userId/:lessonId', async (req, res) => {
+    try {
+        const { userId, lessonId } = req.params;
+        const safeKey = lessonId.replace(/\./g, '_');
+        let user = null;
+        try { if (userId.length === 24) user = await User.findById(userId).lean(); } catch(e) {}
+        if (!user) user = await User.findOne({ phone: userId }).lean();
+        if (!user) return res.json({ hasReset: false });
+
+        const resetData = user.quizResets?.[safeKey];
+        if (!resetData) return res.json({ hasReset: false });
+
+        const now = new Date();
+        const deadline = new Date(resetData.allowedUntil);
+        const expired = now > deadline;
+
+        res.json({
+            hasReset: true,
+            allowedUntil: resetData.allowedUntil,
+            resetAt: resetData.resetAt,
+            days: resetData.days || 2,
+            expired,
+            hoursLeft: expired ? 0 : Math.ceil((deadline - now) / 3600000)
+        });
+    } catch(e) {
+        res.status(500).json({ hasReset: false, error: e.message });
     }
 });
 

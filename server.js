@@ -12,10 +12,39 @@ const server = http.createServer(app);
 const io = new Server(server, {
     cors: { origin: "*", methods: ["GET", "POST"] }
 });
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-dummy-key-for-local-dev' });
 
 app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '50mb' }));
+
+// ─── Authentication & Multi-Tenant Middleware ─────────────────────────────────
+app.use(async (req, res, next) => {
+    if (req.path.startsWith('/api/auth') || req.path === '/api/seed') return next();
+    
+    const userId = req.headers['x-user-id'];
+    if (userId) {
+        try {
+            const user = await mongoose.model('User').findOne({ id: userId }).lean();
+            if (user) {
+                req.user = user;
+                if (user.role === 'admin') {
+                    if (((user.permissions && user.permissions.isOwner) || user.id === 'admin')) {
+                        req.tenantId = req.query.tenantId || 'main';
+                    } else {
+                        req.tenantId = user.id;
+                    }
+                } else {
+                    req.tenantId = user.tenantId || 'main';
+                }
+            } else {
+                req.tenantId = req.query.tenantId || 'main';
+            }
+        } catch(e) { req.tenantId = req.query.tenantId || 'main'; }
+    } else {
+        req.tenantId = req.query.tenantId || 'main';
+    }
+    next();
+});
 
 // ─── Serve Static Files ───────────────────────────────────────────────────────
 // Serve student platform from numi-project root
@@ -24,13 +53,11 @@ app.use(express.static(path.join(__dirname, '..')));
 app.use(express.static(path.join(__dirname, '..', '..')));
 
 // ─── MongoDB Connection ───────────────────────────────────────────────────────
-const MONGO_URI = process.env.MONGO_URI;
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/numi_local_db';
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
-if (!MONGO_URI) {
-  console.error('❌ CRITICAL ERROR: MONGO_URI is not defined in environment variables.');
-  console.error('📌 Add MONGO_URI to your .env file or your hosting platform\'s environment settings.');
-  process.exit(1);
+if (!process.env.MONGO_URI) {
+  console.warn('⚠️ WARNING: MONGO_URI is not defined in environment variables. Falling back to local database.');
 }
 
 console.log(`🌍 Environment: ${NODE_ENV}`);
@@ -71,6 +98,7 @@ const UserSchema = new mongoose.Schema({
   phone:            { type: String, unique: true, required: true },
   password:         { type: String, default: '' },       // student code / password
   role:             { type: String, default: 'student' }, // 'student' | 'admin'
+  tenantId:         { type: String, default: 'main' },
   status:           { type: String, default: 'inactive' }, // 'active' | 'inactive' | 'locked'
   classId:          { type: String, default: '' },
   groupId:          { type: String, default: '' },
@@ -178,7 +206,10 @@ const LiveClass = mongoose.model('LiveClass', LiveClassSchema);
 /** GET /api/teacher-platforms?teacherId=xxx → get platforms for a teacher */
 app.get('/api/teacher-platforms', async (req, res) => {
   try {
-    const { teacherId } = req.query;
+    let { teacherId } = req.query;
+    if (req.user && req.user.role === 'admin' && !(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
+        teacherId = req.user.id;
+    }
     if (!teacherId) return res.status(400).json({ success: false, msg: 'teacherId مطلوب.' });
     const platforms = await TeacherPlatform.find({ teacherId }).sort({ createdAt: 1 });
     res.json({ success: true, platforms });
@@ -188,7 +219,10 @@ app.get('/api/teacher-platforms', async (req, res) => {
 /** POST /api/teacher-platforms → add new platform */
 app.post('/api/teacher-platforms', async (req, res) => {
   try {
-    const { name, url, teacherId } = req.body;
+    let { name, url, teacherId } = req.body;
+    if (req.user && req.user.role === 'admin' && !(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
+        teacherId = req.user.id;
+    }
     if (!name || !url || !teacherId)
       return res.status(400).json({ success: false, msg: 'name و url و teacherId مطلوبة.' });
     const platform = new TeacherPlatform({ name, url, teacherId });
@@ -200,6 +234,11 @@ app.post('/api/teacher-platforms', async (req, res) => {
 /** DELETE /api/teacher-platforms/:id → delete platform */
 app.delete('/api/teacher-platforms/:id', async (req, res) => {
   try {
+    const platform = await TeacherPlatform.findById(req.params.id);
+    if (!platform) return res.status(404).json({ success: false });
+    if (req.user && req.user.role === 'admin' && !(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
+        if (platform.teacherId !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
+    }
     await TeacherPlatform.findByIdAndDelete(req.params.id);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -248,8 +287,9 @@ function generateId() {
 /** GET  /api/platform-data  → return the full CMS document */
 app.get('/api/platform-data', async (req, res) => {
   try {
-    let doc = await PlatformData.findOne({ docId: 'main' });
-    if (!doc) doc = await PlatformData.create({ docId: 'main', data: { classes: {} } });
+    const tenantId = req.tenantId || 'main';
+    let doc = await PlatformData.findOne({ docId: tenantId });
+    if (!doc) doc = await PlatformData.create({ docId: tenantId, data: { classes: {} } });
     res.json(doc.data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -257,9 +297,10 @@ app.get('/api/platform-data', async (req, res) => {
 /** POST /api/platform-data  → overwrite the full CMS document */
 app.post('/api/platform-data', async (req, res) => {
   try {
-    let doc = await PlatformData.findOne({ docId: 'main' });
+    const tenantId = req.tenantId || 'main';
+    let doc = await PlatformData.findOne({ docId: tenantId });
     if (!doc) {
-      doc = new PlatformData({ docId: 'main', data: req.body });
+      doc = new PlatformData({ docId: tenantId, data: req.body });
     } else {
       doc.data = req.body;
       doc.markModified('data');
@@ -279,6 +320,10 @@ app.get('/api/live-classes', async (req, res) => {
     if (teacherId) query.teacherId = teacherId;
     if (groupId) query.groupId = groupId;
     
+    if (req.user && req.user.role === 'admin' && !(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
+        query.teacherId = req.user.id;
+    }
+    
     // Auto-update status logic based on date/time logic can optionally be placed here,
     // or just parsed by the frontend. We will return them as-is.
     const classes = await LiveClass.find(query).sort({ date: 1, time: 1 });
@@ -289,7 +334,11 @@ app.get('/api/live-classes', async (req, res) => {
 /** POST /api/live-classes */
 app.post('/api/live-classes', async (req, res) => {
   try {
-    const liveClass = new LiveClass(req.body);
+    let body = req.body;
+    if (req.user && req.user.role === 'admin' && !(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
+        body.teacherId = req.user.id;
+    }
+    const liveClass = new LiveClass(body);
     await liveClass.save();
     res.json({ success: true, liveClass });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -298,8 +347,13 @@ app.post('/api/live-classes', async (req, res) => {
 /** PUT /api/live-classes/:id */
 app.put('/api/live-classes/:id', async (req, res) => {
   try {
+    const existing = await LiveClass.findById(req.params.id);
+    if (!existing) return res.status(404).json({ success: false, msg: 'الحصة غير موجودة' });
+    if (req.user && req.user.role === 'admin' && !(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
+        if (existing.teacherId !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
+        req.body.teacherId = req.user.id;
+    }
     const liveClass = await LiveClass.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    if (!liveClass) return res.status(404).json({ success: false, msg: 'الحصة غير موجودة' });
     res.json({ success: true, liveClass });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -307,6 +361,11 @@ app.put('/api/live-classes/:id', async (req, res) => {
 /** DELETE /api/live-classes/:id */
 app.delete('/api/live-classes/:id', async (req, res) => {
   try {
+    const existing = await LiveClass.findById(req.params.id);
+    if (!existing) return res.status(404).json({ success: false });
+    if (req.user && req.user.role === 'admin' && !(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
+        if (existing.teacherId !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
+    }
     await LiveClass.findByIdAndDelete(req.params.id);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -345,7 +404,7 @@ app.post('/api/auth/login', async (req, res) => {
 /** POST /api/auth/register → { name, phone, password, classId } → { success, user } */
 app.post('/api/auth/register', async (req, res) => {
   try {
-    const { name, phone, password, classId, groupId, parentPhone, school } = req.body;
+    const { name, phone, password, classId, groupId, parentPhone, school, tenantId } = req.body;
     if (!name || !phone || !password || !classId || !groupId)
       return res.status(400).json({ success: false, msg: 'يرجى إكمال جميع البيانات الأساسية واختيار الصف والمجموعة.' });
 
@@ -363,7 +422,8 @@ app.post('/api/auth/register', async (req, res) => {
       parentPhone,
       school,
       role: 'student',
-      status: 'inactive'
+      status: 'inactive',
+      tenantId: tenantId || 'main'
     });
 
     await newUser.save();
@@ -375,7 +435,11 @@ app.post('/api/auth/register', async (req, res) => {
 /** GET  /api/users          → list all users (admin) */
 app.get('/api/users', async (req, res) => {
   try {
-    const users = await User.find({});
+    let query = {};
+    if (req.user && req.user.role === 'admin' && !(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
+        query = { $or: [{ id: req.user.id }, { tenantId: req.user.id }] };
+    }
+    const users = await User.find(query);
     res.json(users);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -385,6 +449,22 @@ app.post('/api/users', async (req, res) => {
   try {
     const body = req.body;
     if (!body.id) body.id = generateId();
+    
+    if (req.user && req.user.role === 'admin') {
+        if (!(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
+            body.role = 'student';
+            body.tenantId = req.user.id;
+        } else {
+            if (body.role === 'admin' && !(((body.permissions && body.permissions.isOwner) || body.id === 'admin'))) {
+                body.tenantId = body.id;
+            } else {
+                body.tenantId = 'main';
+            }
+        }
+    } else {
+        body.tenantId = 'main';
+    }
+
     const user = new User(body);
     await user.save();
     const { password: _p, ...safeUser } = user.toObject();
@@ -402,7 +482,11 @@ app.post('/api/users', async (req, res) => {
 /** PUT  /api/users/:id      → update user by custom `id` field */
 app.put('/api/users/:id', async (req, res) => {
   try {
-    const updated = await User.findOneAndUpdate({ id: req.params.id }, req.body, { new: true }).select('-password');
+    let query = { id: req.params.id };
+    if (req.user && req.user.role === 'admin' && !(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
+         query = { id: req.params.id, $or: [{ id: req.user.id }, { tenantId: req.user.id }] };
+    }
+    const updated = await User.findOneAndUpdate(query, req.body, { new: true }).select('-password');
     if (!updated) return res.status(404).json({ success: false, msg: 'المستخدم غير موجود.' });
     res.json({ success: true, user: updated });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -420,7 +504,12 @@ app.get('/api/users/:id', async (req, res) => {
 /** DELETE /api/users/:id   → delete user by custom `id` field */
 app.delete('/api/users/:id', async (req, res) => {
   try {
-    await User.findOneAndDelete({ id: req.params.id });
+    let query = { id: req.params.id };
+    if (req.user && req.user.role === 'admin' && !(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
+         query = { id: req.params.id, $or: [{ id: req.user.id }, { tenantId: req.user.id }] };
+    }
+    const deleted = await User.findOneAndDelete(query);
+    if (!deleted) return res.status(404).json({ success: false, msg: 'User not found or unauthorized' });
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -428,7 +517,8 @@ app.delete('/api/users/:id', async (req, res) => {
 /** GET  /api/honor-board           → get all honor board entries */
 app.get('/api/honor-board', async (req, res) => {
   try {
-    let doc = await PlatformData.findOne({ docId: 'main' });
+    const tenantId = req.tenantId || 'main';
+    let doc = await PlatformData.findOne({ docId: tenantId });
     const honorBoard = doc?.data?.honorBoard || {};
     res.json({ success: true, honorBoard });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -441,7 +531,8 @@ app.post('/api/honor-board', async (req, res) => {
     if (!classId || !groupId || !Array.isArray(students))
       return res.status(400).json({ success: false, msg: 'بيانات ناقصة.' });
     
-    let doc = await PlatformData.findOne({ docId: 'main' });
+    const tenantId = req.tenantId || 'main';
+    let doc = await PlatformData.findOne({ docId: tenantId });
     if (!doc) return res.status(404).json({ success: false, msg: 'لا توجد بيانات منصة.' });
     
     if (!doc.data.honorBoard) doc.data.honorBoard = {};
@@ -582,7 +673,12 @@ app.put('/api/notifications/:id/read', async (req, res) => {
 /** PUT  /api/users/:id/reset-device  → clear deviceId lock */
 app.put('/api/users/:id/reset-device', async (req, res) => {
   try {
-    await User.findOneAndUpdate({ id: req.params.id }, { deviceId: '' });
+    let query = { id: req.params.id };
+    if (req.user && req.user.role === 'admin' && !(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
+        query.tenantId = req.user.id;
+    }
+    const updated = await User.findOneAndUpdate(query, { deviceId: '' });
+    if (!updated) return res.status(404).json({ success: false, msg: 'المستخدم غير موجود' });
     res.json({ success: true, msg: 'تم إعادة تعيين قفل الجهاز.' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1043,9 +1139,14 @@ app.get('/api/admin/reports/:lessonId', async (req, res) => {
             }
         }
         
+        let userQuery = {};
+        if (req.user && req.user.role === 'admin' && !(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
+            userQuery.tenantId = req.user.id;
+        }
+        
         const [usersById, usersByPhone] = await Promise.all([
-            User.find({ _id: { $in: validObjectIds } }).lean(),
-            User.find({ phone: { $in: phoneStrings } }).lean()
+            User.find({ _id: { $in: validObjectIds }, ...userQuery }).lean(),
+            User.find({ phone: { $in: phoneStrings }, ...userQuery }).lean()
         ]);
         
         const allMatchedUsers = [...usersById, ...usersByPhone];

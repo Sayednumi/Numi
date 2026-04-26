@@ -32,6 +32,7 @@ const ADMIN = {
   password: 'Numi@2026',
   role:     'admin',
   status:   'active',
+  permissions: { isOwner: true }
 };
 // ─────────────────────────────────────────────────────────────────────
 

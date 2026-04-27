@@ -266,8 +266,17 @@ app.delete('/api/teacher-platforms/:id', async (req, res) => {
 /** PUT /api/teacher-platforms/reorder → bulk update order_index */
 app.put('/api/teacher-platforms/reorder', async (req, res) => {
   try {
-    const { orderedIds } = req.body; // array of platform IDs in new order
-    if (!Array.isArray(orderedIds)) return res.status(400).json({ success: false, msg: 'orderedIds مطلوب.' });
+    const { orderedIds } = req.body;
+    if (!Array.isArray(orderedIds) || !orderedIds.length)
+        return res.status(400).json({ success: false, msg: 'orderedIds مطلوب.' });
+    // Verify ownership if not super-admin
+    if (req.user && req.user.role !== 'admin') {
+        const count = await TeacherPlatform.countDocuments({
+            _id: { $in: orderedIds },
+            teacherId: { $ne: req.user.id }
+        });
+        if (count > 0) return res.status(403).json({ error: 'Forbidden: some platforms don\'t belong to you.' });
+    }
     const ops = orderedIds.map((id, idx) => ({
       updateOne: { filter: { _id: id }, update: { $set: { order_index: idx } } }
     }));
@@ -309,7 +318,14 @@ app.get('/api/audit-logs', async (req, res) => {
 
 app.post('/api/audit-logs', async (req, res) => {
   try {
+     // Only authenticated admins may write audit logs
+     if (!req.user || req.user.role !== 'admin') {
+         return res.status(403).json({ error: 'Forbidden' });
+     }
      const { adminId, adminName, action, target, details } = req.body;
+     if (!adminId || !action || !target) {
+         return res.status(400).json({ error: 'Missing required fields.' });
+     }
      const log = new AuditLog({ adminId, adminName, action, target, details });
      await log.save();
      res.json({ success: true });

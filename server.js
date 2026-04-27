@@ -172,9 +172,14 @@ const PrivateChat = mongoose.model('PrivateChat', PrivateChatSchema);
 
 // TeacherPlatform: helper platforms saved per teacher/admin
 const TeacherPlatformSchema = new mongoose.Schema({
-  name:      { type: String, required: true },
-  url:       { type: String, required: true },
-  teacherId: { type: String, required: true }
+  name:        { type: String, required: true },
+  url:         { type: String, required: true },
+  teacherId:   { type: String, required: true },
+  description: { type: String, default: '' },
+  icon:        { type: String, default: '' },
+  isVisible:   { type: Boolean, default: true },
+  isPinned:    { type: Boolean, default: false },
+  order_index: { type: Number, default: 0 }
 }, { timestamps: true });
 const TeacherPlatform = mongoose.model('TeacherPlatform', TeacherPlatformSchema);
 
@@ -223,7 +228,7 @@ app.get('/api/teacher-platforms', async (req, res) => {
         teacherId = req.user.id;
     }
     if (!teacherId) return res.status(400).json({ success: false, msg: 'teacherId مطلوب.' });
-    const platforms = await TeacherPlatform.find({ teacherId }).sort({ createdAt: 1 });
+    const platforms = await TeacherPlatform.find({ teacherId }).sort({ order_index: 1, createdAt: 1 });
     res.json({ success: true, platforms });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -237,7 +242,9 @@ app.post('/api/teacher-platforms', async (req, res) => {
     }
     if (!name || !url || !teacherId)
       return res.status(400).json({ success: false, msg: 'name و url و teacherId مطلوبة.' });
-    const platform = new TeacherPlatform({ name, url, teacherId });
+    const { description = '', icon = '', isPinned = false } = req.body;
+    const count = await TeacherPlatform.countDocuments({ teacherId });
+    const platform = new TeacherPlatform({ name, url, teacherId, description, icon, isPinned, order_index: count });
     await platform.save();
     res.json({ success: true, platform });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -253,6 +260,39 @@ app.delete('/api/teacher-platforms/:id', async (req, res) => {
     }
     await TeacherPlatform.findByIdAndDelete(req.params.id);
     res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/** PUT /api/teacher-platforms/reorder → bulk update order_index */
+app.put('/api/teacher-platforms/reorder', async (req, res) => {
+  try {
+    const { orderedIds } = req.body; // array of platform IDs in new order
+    if (!Array.isArray(orderedIds)) return res.status(400).json({ success: false, msg: 'orderedIds مطلوب.' });
+    const ops = orderedIds.map((id, idx) => ({
+      updateOne: { filter: { _id: id }, update: { $set: { order_index: idx } } }
+    }));
+    await TeacherPlatform.bulkWrite(ops);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/** PUT /api/teacher-platforms/:id → update platform fields */
+app.put('/api/teacher-platforms/:id', async (req, res) => {
+  try {
+    const platform = await TeacherPlatform.findById(req.params.id);
+    if (!platform) return res.status(404).json({ success: false });
+    if (req.user && req.user.role === 'admin' && !(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
+        if (platform.teacherId !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
+    }
+    const { name, url, description, icon, isVisible, isPinned } = req.body;
+    if (name !== undefined) platform.name = name;
+    if (url !== undefined) platform.url = url;
+    if (description !== undefined) platform.description = description;
+    if (icon !== undefined) platform.icon = icon;
+    if (isVisible !== undefined) platform.isVisible = isVisible;
+    if (isPinned !== undefined) platform.isPinned = isPinned;
+    await platform.save();
+    res.json({ success: true, platform });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

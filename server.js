@@ -33,6 +33,8 @@ app.use(async (req, res, next) => {
                     } else {
                         req.tenantId = user.id;
                     }
+                } else if (user.role === 'teacher') {
+                    req.tenantId = user.id;
                 } else {
                     req.tenantId = user.tenantId || 'main';
                 }
@@ -201,6 +203,16 @@ const LiveClassSchema = new mongoose.Schema({
 }, { timestamps: true });
 const LiveClass = mongoose.model('LiveClass', LiveClassSchema);
 
+// AuditLog
+const AuditLogSchema = new mongoose.Schema({
+  adminId:   { type: String, required: true },
+  adminName: { type: String, required: true },
+  action:    { type: String, required: true },
+  target:    { type: String, required: true },
+  details:   { type: String }
+}, { timestamps: true });
+const AuditLog = mongoose.model('AuditLog', AuditLogSchema);
+
 // ─── TEACHER PLATFORMS ROUTES ─────────────────────────────────────────────────
 
 /** GET /api/teacher-platforms?teacherId=xxx → get platforms for a teacher */
@@ -241,6 +253,26 @@ app.delete('/api/teacher-platforms/:id', async (req, res) => {
     }
     await TeacherPlatform.findByIdAndDelete(req.params.id);
     res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── AUDIT LOGS ROUTES ────────────────────────────────────────────────────────
+
+app.get('/api/audit-logs', async (req, res) => {
+  try {
+     const isOwner = req.user && req.user.role === 'admin' && ((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin');
+     if (!isOwner) return res.status(403).json({ error: 'Forbidden' });
+     const logs = await AuditLog.find().sort({ createdAt: -1 }).limit(100);
+     res.json({ success: true, logs });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/audit-logs', async (req, res) => {
+  try {
+     const { adminId, adminName, action, target, details } = req.body;
+     const log = new AuditLog({ adminId, adminName, action, target, details });
+     await log.save();
+     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -436,8 +468,17 @@ app.post('/api/auth/register', async (req, res) => {
 app.get('/api/users', async (req, res) => {
   try {
     let query = {};
-    if (req.user && req.user.role === 'admin' && !(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
+    const isSuperAdmin = req.user && req.user.role === 'admin' && ((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin');
+    const hasManageTeachers = req.user && req.user.permissions && req.user.permissions.manage_teachers;
+    
+    if (req.user && req.user.role === 'teacher') {
         query = { $or: [{ id: req.user.id }, { tenantId: req.user.id }] };
+    } else if (req.user && req.user.role === 'admin' && !isSuperAdmin) {
+        if (hasManageTeachers) {
+             query = {}; // allow fetching to filter out later or query for teachers specifically
+        } else {
+             query = { $or: [{ id: req.user.id }, { tenantId: req.user.id }] };
+        }
     }
     const users = await User.find(query);
     res.json(users);
@@ -450,12 +491,22 @@ app.post('/api/users', async (req, res) => {
     const body = req.body;
     if (!body.id) body.id = generateId();
     
-    if (req.user && req.user.role === 'admin') {
-        if (!(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
-            body.role = 'student';
-            body.tenantId = req.user.id;
+    if (req.user && req.user.role === 'teacher') {
+        body.role = 'student';
+        body.tenantId = req.user.id;
+    } else if (req.user && req.user.role === 'admin') {
+        const isSuperAdmin = ((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin');
+        const hasManageTeachers = req.user.permissions && req.user.permissions.manage_teachers;
+        
+        if (!isSuperAdmin) {
+            if (hasManageTeachers && body.role === 'teacher') {
+                body.tenantId = body.id;
+            } else {
+                body.role = 'student';
+                body.tenantId = req.user.id;
+            }
         } else {
-            if (body.role === 'admin' && !(((body.permissions && body.permissions.isOwner) || body.id === 'admin'))) {
+            if ((body.role === 'admin' || body.role === 'teacher') && !(((body.permissions && body.permissions.isOwner) || body.id === 'admin'))) {
                 body.tenantId = body.id;
             } else {
                 body.tenantId = 'main';
@@ -483,8 +534,14 @@ app.post('/api/users', async (req, res) => {
 app.put('/api/users/:id', async (req, res) => {
   try {
     let query = { id: req.params.id };
-    if (req.user && req.user.role === 'admin' && !(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
+    const isSuperAdmin = req.user && req.user.role === 'admin' && ((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin');
+    const hasManageTeachers = req.user && req.user.permissions && req.user.permissions.manage_teachers;
+    if (req.user && req.user.role === 'teacher') {
          query = { id: req.params.id, $or: [{ id: req.user.id }, { tenantId: req.user.id }] };
+    } else if (req.user && req.user.role === 'admin' && !isSuperAdmin) {
+         if (!hasManageTeachers) {
+             query = { id: req.params.id, $or: [{ id: req.user.id }, { tenantId: req.user.id }] };
+         }
     }
     const updated = await User.findOneAndUpdate(query, req.body, { new: true }).select('-password');
     if (!updated) return res.status(404).json({ success: false, msg: 'المستخدم غير موجود.' });
@@ -505,8 +562,14 @@ app.get('/api/users/:id', async (req, res) => {
 app.delete('/api/users/:id', async (req, res) => {
   try {
     let query = { id: req.params.id };
-    if (req.user && req.user.role === 'admin' && !(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
+    const isSuperAdmin = req.user && req.user.role === 'admin' && ((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin');
+    const hasManageTeachers = req.user && req.user.permissions && req.user.permissions.manage_teachers;
+    if (req.user && req.user.role === 'teacher') {
          query = { id: req.params.id, $or: [{ id: req.user.id }, { tenantId: req.user.id }] };
+    } else if (req.user && req.user.role === 'admin' && !isSuperAdmin) {
+         if (!hasManageTeachers) {
+             query = { id: req.params.id, $or: [{ id: req.user.id }, { tenantId: req.user.id }] };
+         }
     }
     const deleted = await User.findOneAndDelete(query);
     if (!deleted) return res.status(404).json({ success: false, msg: 'User not found or unauthorized' });

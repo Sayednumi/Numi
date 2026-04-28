@@ -10,7 +10,7 @@ const { OpenAI } = require('openai');
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
-    cors: { origin: "*", methods: ["GET", "POST"] }
+  cors: { origin: "*", methods: ["GET", "POST"] }
 });
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-dummy-key-for-local-dev' });
 
@@ -19,37 +19,41 @@ app.use(express.json({ limit: '50mb' }));
 
 // ─── Authentication & Multi-Tenant Middleware ─────────────────────────────────
 app.use(async (req, res, next) => {
-    if (req.path.startsWith('/api/auth') || req.path === '/api/seed') return next();
-    
-    const userId = req.headers['x-user-id'];
-    if (userId) {
-        try {
-            const user = await mongoose.model('User').findOne({ id: userId }).lean();
-            if (user) {
-                req.user = user;
-                if (user.role === 'admin') {
-                    if (((user.permissions && user.permissions.isOwner) || user.id === 'admin')) {
-                        req.tenantId = req.query.tenantId || 'main';
-                    } else {
-                        req.tenantId = user.id;
-                    }
-                } else if (user.role === 'teacher') {
-                    req.tenantId = user.id;
-                } else {
-                    req.tenantId = user.tenantId || 'main';
-                }
-            } else {
-                req.tenantId = req.query.tenantId || 'main';
-            }
-        } catch(e) { req.tenantId = req.query.tenantId || 'main'; }
-    } else {
+  if (req.path.startsWith('/api/auth') || req.path === '/api/seed') return next();
+
+  const userId = req.headers['x-user-id'];
+  if (userId) {
+    try {
+      const user = await mongoose.model('User').findOne({ id: userId }).lean();
+      if (user) {
+        req.user = user;
+        if (user.role === 'admin') {
+          if (((user.permissions && user.permissions.isOwner) || user.id === 'admin')) {
+            req.tenantId = req.query.tenantId || 'main';
+          } else {
+            req.tenantId = user.id;
+          }
+        } else if (user.role === 'teacher') {
+          req.tenantId = user.id;
+        } else {
+          req.tenantId = user.tenantId || 'main';
+        }
+      } else {
         req.tenantId = req.query.tenantId || 'main';
-    }
-    next();
+      }
+    } catch (e) { req.tenantId = req.query.tenantId || 'main'; }
+  } else {
+    req.tenantId = req.query.tenantId || 'main';
+  }
+  next();
 });
 
 // ─── Serve Static Files ───────────────────────────────────────────────────────
-// Serve student platform from numi-project root
+// Serve student platform from public folder
+app.use(express.static(path.join(__dirname, '..', 'public')));
+// Also serve src folder so frontend can access assets, styles, etc.
+app.use('/src', express.static(path.join(__dirname, '..', 'src')));
+// Serve root folder as fallback for backwards compatibility
 app.use(express.static(path.join(__dirname, '..')));
 // Serve admin panel from parent Numi folder
 app.use(express.static(path.join(__dirname, '..', '..')));
@@ -66,14 +70,14 @@ console.log(`🌍 Environment: ${NODE_ENV}`);
 console.log('🔌 Connecting to MongoDB Atlas...');
 
 const mongoOptions = {
-    serverSelectionTimeoutMS: 20000,   // Increase timeout for server selection
-    connectTimeoutMS: 20000,           // Increase connection timeout
-    socketTimeoutMS: 45000             // Increase socket timeout
+  serverSelectionTimeoutMS: 20000,   // Increase timeout for server selection
+  connectTimeoutMS: 20000,           // Increase connection timeout
+  socketTimeoutMS: 45000             // Increase socket timeout
 };
 
 // Only allow invalid TLS certs in development (local clock issues)
 if (NODE_ENV !== 'production') {
-    mongoOptions.tlsAllowInvalidCertificates = true;
+  mongoOptions.tlsAllowInvalidCertificates = true;
 }
 
 mongoose.connect(MONGO_URI, mongoOptions)
@@ -89,132 +93,132 @@ mongoose.connect(MONGO_URI, mongoOptions)
 // PlatformData: stores the full CMS tree (classes → groups → courses → units → lessons)
 const PlatformDataSchema = new mongoose.Schema({
   docId: { type: String, default: 'main', unique: true },
-  data:  { type: mongoose.Schema.Types.Mixed, default: { classes: {} } }
+  data: { type: mongoose.Schema.Types.Mixed, default: { classes: {} } }
 }, { timestamps: true });
 const PlatformData = mongoose.model('PlatformData', PlatformDataSchema);
 
 // User: students & admins
 const UserSchema = new mongoose.Schema({
-  id:               { type: String, unique: true, required: true },
-  name:             { type: String, required: true },
-  phone:            { type: String, unique: true, required: true },
-  password:         { type: String, default: '' },       // student code / password
-  role:             { type: String, default: 'student' }, // 'student' | 'admin'
-  tenantId:         { type: String, default: 'main' },
-  status:           { type: String, default: 'inactive' }, // 'active' | 'inactive' | 'locked'
-  classId:          { type: String, default: '' },
-  groupId:          { type: String, default: '' },
+  id: { type: String, unique: true, required: true },
+  name: { type: String, required: true },
+  phone: { type: String, unique: true, required: true },
+  password: { type: String, default: '' },       // student code / password
+  role: { type: String, default: 'student' }, // 'student' | 'admin'
+  tenantId: { type: String, default: 'main' },
+  status: { type: String, default: 'inactive' }, // 'active' | 'inactive' | 'locked'
+  classId: { type: String, default: '' },
+  groupId: { type: String, default: '' },
   completedLessons: { type: [String], default: [] },
-  quizScores:       { type: mongoose.Schema.Types.Mixed, default: {} }, // lessonId -> score (string format "X / Y")
-  quizAnswers:      { type: mongoose.Schema.Types.Mixed, default: {} }, // lessonId -> [ans1, ans2, ...]
-  xp:               { type: Number, default: 0 },
-  streak:           { type: Number, default: 0 },
-  deviceId:         { type: String, default: '' },
-  parentPhone:      { type: String, default: '' },
-  school:           { type: String, default: '' },
-  dob:              { type: String, default: '' },
-  avatar:           { type: String, default: '' },
-  permissions:      { type: mongoose.Schema.Types.Mixed, default: {} },
-  liveStats:        { type: mongoose.Schema.Types.Mixed, default: { totalSessions: 0, completedSessions: 0 } },
-  quizResets:       { type: mongoose.Schema.Types.Mixed, default: {} } // lessonId -> { allowedUntil, resetAt }
+  quizScores: { type: mongoose.Schema.Types.Mixed, default: {} }, // lessonId -> score (string format "X / Y")
+  quizAnswers: { type: mongoose.Schema.Types.Mixed, default: {} }, // lessonId -> [ans1, ans2, ...]
+  xp: { type: Number, default: 0 },
+  streak: { type: Number, default: 0 },
+  deviceId: { type: String, default: '' },
+  parentPhone: { type: String, default: '' },
+  school: { type: String, default: '' },
+  dob: { type: String, default: '' },
+  avatar: { type: String, default: '' },
+  permissions: { type: mongoose.Schema.Types.Mixed, default: {} },
+  liveStats: { type: mongoose.Schema.Types.Mixed, default: { totalSessions: 0, completedSessions: 0 } },
+  quizResets: { type: mongoose.Schema.Types.Mixed, default: {} } // lessonId -> { allowedUntil, resetAt }
 }, { timestamps: true });
 const User = mongoose.model('User', UserSchema);
- 
+
 // ChatSession: store conversation history for 15 days
 const ChatSessionSchema = new mongoose.Schema({
-    id:         { type: String, unique: true, required: true },
-    userId:     { type: String, required: true },
-    messages:   { type: [mongoose.Schema.Types.Mixed], default: [] }, // Array of objects { isUser: bool, text: string }
-    createdAt:  { type: Date, default: Date.now, index: { expires: '15d' } }
+  id: { type: String, unique: true, required: true },
+  userId: { type: String, required: true },
+  messages: { type: [mongoose.Schema.Types.Mixed], default: [] }, // Array of objects { isUser: bool, text: string }
+  createdAt: { type: Date, default: Date.now, index: { expires: '15d' } }
 }, { timestamps: true });
 const ChatSession = mongoose.model('ChatSession', ChatSessionSchema);
 
 // QuizAttempt: tracking student quiz sessions
 const QuizAttemptSchema = new mongoose.Schema({
-    userId:     { type: String, required: true },
-    lessonId:   { type: String, required: true },
-    status:     { type: String, default: 'in-progress' }, // 'in-progress' | 'completed'
-    score:      { type: String, default: '' },
-    answers:    { type: [mongoose.Schema.Types.Mixed], default: [] },
-    startTime:  { type: Date, default: Date.now },
-    endTime:    { type: Date },
-    remainingTime: { type: Number }, // in seconds
-    deviceId:   { type: String },
-    attemptNum: { type: Number, default: 1 } // Support multiple attempts
+  userId: { type: String, required: true },
+  lessonId: { type: String, required: true },
+  status: { type: String, default: 'in-progress' }, // 'in-progress' | 'completed'
+  score: { type: String, default: '' },
+  answers: { type: [mongoose.Schema.Types.Mixed], default: [] },
+  startTime: { type: Date, default: Date.now },
+  endTime: { type: Date },
+  remainingTime: { type: Number }, // in seconds
+  deviceId: { type: String },
+  attemptNum: { type: Number, default: 1 } // Support multiple attempts
 }, { timestamps: true });
 QuizAttemptSchema.index({ userId: 1, lessonId: 1, attemptNum: 1 }, { unique: true });
 const QuizAttempt = mongoose.model('QuizAttempt', QuizAttemptSchema);
 
 // GroupChat: message shared within a group
 const GroupChatSchema = new mongoose.Schema({
-    groupId:    { type: String, required: true },
-    senderId:   { type: String, required: true },
-    senderName: { type: String, required: true },
-    message:    { type: String, required: true },
-    isPinned:   { type: Boolean, default: false },
-    replyTo:    { type: mongoose.Schema.Types.Mixed }, 
-    readBy:     { type: [String], default: [] }, // Array of user IDs who have read the message
-    timestamp:  { type: Date, default: Date.now }
+  groupId: { type: String, required: true },
+  senderId: { type: String, required: true },
+  senderName: { type: String, required: true },
+  message: { type: String, required: true },
+  isPinned: { type: Boolean, default: false },
+  replyTo: { type: mongoose.Schema.Types.Mixed },
+  readBy: { type: [String], default: [] }, // Array of user IDs who have read the message
+  timestamp: { type: Date, default: Date.now }
 }, { timestamps: true });
 const GroupChat = mongoose.model('GroupChat', GroupChatSchema);
 
 const PrivateChatSchema = new mongoose.Schema({
-    senderId:   { type: String, required: true },
-    receiverId: { type: String, required: true },
-    senderName: { type: String, required: true },
-    message:    { type: String, required: true },
-    isPinned:   { type: Boolean, default: false },
-    isRead:     { type: Boolean, default: false }, // For private messages (seen tick)
-    replyTo:    { type: mongoose.Schema.Types.Mixed }, 
-    timestamp:  { type: Date, default: Date.now }
+  senderId: { type: String, required: true },
+  receiverId: { type: String, required: true },
+  senderName: { type: String, required: true },
+  message: { type: String, required: true },
+  isPinned: { type: Boolean, default: false },
+  isRead: { type: Boolean, default: false }, // For private messages (seen tick)
+  replyTo: { type: mongoose.Schema.Types.Mixed },
+  timestamp: { type: Date, default: Date.now }
 }, { timestamps: true });
 const PrivateChat = mongoose.model('PrivateChat', PrivateChatSchema);
 
 // TeacherPlatform: helper platforms saved per teacher/admin
 const TeacherPlatformSchema = new mongoose.Schema({
-  name:        { type: String, required: true },
-  url:         { type: String, required: true },
-  teacherId:   { type: String, required: true },
+  name: { type: String, required: true },
+  url: { type: String, required: true },
+  teacherId: { type: String, required: true },
   description: { type: String, default: '' },
-  icon:        { type: String, default: '' },
-  isVisible:   { type: Boolean, default: true },
-  isPinned:    { type: Boolean, default: false },
+  icon: { type: String, default: '' },
+  isVisible: { type: Boolean, default: true },
+  isPinned: { type: Boolean, default: false },
   order_index: { type: Number, default: 0 }
 }, { timestamps: true });
 const TeacherPlatform = mongoose.model('TeacherPlatform', TeacherPlatformSchema);
 
 // Notification
 const NotificationSchema = new mongoose.Schema({
-  userId:  { type: String, required: true, index: true },
-  title:   { type: String, required: true },
+  userId: { type: String, required: true, index: true },
+  title: { type: String, required: true },
   details: { type: String, required: true },
-  type:    { type: String, required: true }, // 'video', 'file', 'lesson'
-  link:    { type: String, default: '' },
-  isRead:  { type: Boolean, default: false }
+  type: { type: String, required: true }, // 'video', 'file', 'lesson'
+  link: { type: String, default: '' },
+  isRead: { type: Boolean, default: false }
 }, { timestamps: true });
 const Notification = mongoose.model('Notification', NotificationSchema);
 
 // LiveClass: tracks live classes linked to a group
 const LiveClassSchema = new mongoose.Schema({
   teacherId: { type: String, required: true },
-  classId:   { type: String, required: true },
-  groupId:   { type: String, required: true },
-  title:     { type: String, required: true },
-  link:      { type: String, required: true },
-  date:      { type: String, required: true },
-  time:      { type: String, required: true },
-  duration:  { type: Number, required: true },
-  status:    { type: String, default: 'scheduled' } // 'scheduled', 'live', 'finished'
+  classId: { type: String, required: true },
+  groupId: { type: String, required: true },
+  title: { type: String, required: true },
+  link: { type: String, required: true },
+  date: { type: String, required: true },
+  time: { type: String, required: true },
+  duration: { type: Number, required: true },
+  status: { type: String, default: 'scheduled' } // 'scheduled', 'live', 'finished'
 }, { timestamps: true });
 const LiveClass = mongoose.model('LiveClass', LiveClassSchema);
 
 // AuditLog
 const AuditLogSchema = new mongoose.Schema({
-  adminId:   { type: String, required: true },
+  adminId: { type: String, required: true },
   adminName: { type: String, required: true },
-  action:    { type: String, required: true },
-  target:    { type: String, required: true },
-  details:   { type: String }
+  action: { type: String, required: true },
+  target: { type: String, required: true },
+  details: { type: String }
 }, { timestamps: true });
 const AuditLog = mongoose.model('AuditLog', AuditLogSchema);
 
@@ -225,7 +229,7 @@ app.get('/api/teacher-platforms', async (req, res) => {
   try {
     let { teacherId } = req.query;
     if (req.user && req.user.role === 'admin' && !(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
-        teacherId = req.user.id;
+      teacherId = req.user.id;
     }
     if (!teacherId) return res.status(400).json({ success: false, msg: 'teacherId مطلوب.' });
     const platforms = await TeacherPlatform.find({ teacherId }).sort({ order_index: 1, createdAt: 1 });
@@ -238,7 +242,7 @@ app.post('/api/teacher-platforms', async (req, res) => {
   try {
     let { name, url, teacherId } = req.body;
     if (req.user && req.user.role === 'admin' && !(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
-        teacherId = req.user.id;
+      teacherId = req.user.id;
     }
     if (!name || !url || !teacherId)
       return res.status(400).json({ success: false, msg: 'name و url و teacherId مطلوبة.' });
@@ -256,7 +260,7 @@ app.delete('/api/teacher-platforms/:id', async (req, res) => {
     const platform = await TeacherPlatform.findById(req.params.id);
     if (!platform) return res.status(404).json({ success: false });
     if (req.user && req.user.role === 'admin' && !(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
-        if (platform.teacherId !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
+      if (platform.teacherId !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
     }
     await TeacherPlatform.findByIdAndDelete(req.params.id);
     res.json({ success: true });
@@ -268,14 +272,14 @@ app.put('/api/teacher-platforms/reorder', async (req, res) => {
   try {
     const { orderedIds } = req.body;
     if (!Array.isArray(orderedIds) || !orderedIds.length)
-        return res.status(400).json({ success: false, msg: 'orderedIds مطلوب.' });
+      return res.status(400).json({ success: false, msg: 'orderedIds مطلوب.' });
     // Verify ownership if not super-admin
     if (req.user && req.user.role !== 'admin') {
-        const count = await TeacherPlatform.countDocuments({
-            _id: { $in: orderedIds },
-            teacherId: { $ne: req.user.id }
-        });
-        if (count > 0) return res.status(403).json({ error: 'Forbidden: some platforms don\'t belong to you.' });
+      const count = await TeacherPlatform.countDocuments({
+        _id: { $in: orderedIds },
+        teacherId: { $ne: req.user.id }
+      });
+      if (count > 0) return res.status(403).json({ error: 'Forbidden: some platforms don\'t belong to you.' });
     }
     const ops = orderedIds.map((id, idx) => ({
       updateOne: { filter: { _id: id }, update: { $set: { order_index: idx } } }
@@ -291,7 +295,7 @@ app.put('/api/teacher-platforms/:id', async (req, res) => {
     const platform = await TeacherPlatform.findById(req.params.id);
     if (!platform) return res.status(404).json({ success: false });
     if (req.user && req.user.role === 'admin' && !(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
-        if (platform.teacherId !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
+      if (platform.teacherId !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
     }
     const { name, url, description, icon, isVisible, isPinned } = req.body;
     if (name !== undefined) platform.name = name;
@@ -309,60 +313,60 @@ app.put('/api/teacher-platforms/:id', async (req, res) => {
 
 app.get('/api/audit-logs', async (req, res) => {
   try {
-     const isOwner = req.user && req.user.role === 'admin' && ((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin');
-     if (!isOwner) return res.status(403).json({ error: 'Forbidden' });
-     const logs = await AuditLog.find().sort({ createdAt: -1 }).limit(100);
-     res.json({ success: true, logs });
+    const isOwner = req.user && req.user.role === 'admin' && ((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin');
+    if (!isOwner) return res.status(403).json({ error: 'Forbidden' });
+    const logs = await AuditLog.find().sort({ createdAt: -1 }).limit(100);
+    res.json({ success: true, logs });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/audit-logs', async (req, res) => {
   try {
-     // Only authenticated admins may write audit logs
-     if (!req.user || req.user.role !== 'admin') {
-         return res.status(403).json({ error: 'Forbidden' });
-     }
-     const { adminId, adminName, action, target, details } = req.body;
-     if (!adminId || !action || !target) {
-         return res.status(400).json({ error: 'Missing required fields.' });
-     }
-     const log = new AuditLog({ adminId, adminName, action, target, details });
-     await log.save();
-     res.json({ success: true });
+    // Only authenticated admins may write audit logs
+    if (!req.user || req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    const { adminId, adminName, action, target, details } = req.body;
+    if (!adminId || !action || !target) {
+      return res.status(400).json({ error: 'Missing required fields.' });
+    }
+    const log = new AuditLog({ adminId, adminName, action, target, details });
+    await log.save();
+    res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ─── Native Chat Logic (WebSockets) ──────────────────────────────────────────
 io.on('connection', (socket) => {
-    socket.on('join', (room) => {
-        socket.join(room);
-    });
+  socket.on('join', (room) => {
+    socket.join(room);
+  });
 
-    socket.on('typing', ({ room, userName, isTyping }) => {
-        socket.to(room).emit('user_typing', { userName, isTyping });
-    });
+  socket.on('typing', ({ room, userName, isTyping }) => {
+    socket.to(room).emit('user_typing', { userName, isTyping });
+  });
 
-    socket.on('mark_read', async ({ msgId, type, userId }) => {
-        try {
-            if (type === 'private') {
-                const updated = await PrivateChat.findByIdAndUpdate(msgId, { isRead: true }, { new: true });
-                if (updated) {
-                    // Notify original sender that message was seen
-                    io.to(updated.senderId).emit('message_seen', { msgId });
-                    // Also notify the room
-                    const room = [updated.senderId, updated.receiverId].sort().join('_');
-                    io.to(room).emit('chat_updated', { type: 'private', msgId, isRead: true });
-                }
-            } else {
-                await GroupChat.findByIdAndUpdate(msgId, { $addToSet: { readBy: userId } });
-                io.to(msgId).emit('chat_updated', { type: 'group', msgId, readByUserId: userId });
-            }
-        } catch (e) { console.error('Socket mark_read error:', e); }
-    });
+  socket.on('mark_read', async ({ msgId, type, userId }) => {
+    try {
+      if (type === 'private') {
+        const updated = await PrivateChat.findByIdAndUpdate(msgId, { isRead: true }, { new: true });
+        if (updated) {
+          // Notify original sender that message was seen
+          io.to(updated.senderId).emit('message_seen', { msgId });
+          // Also notify the room
+          const room = [updated.senderId, updated.receiverId].sort().join('_');
+          io.to(room).emit('chat_updated', { type: 'private', msgId, isRead: true });
+        }
+      } else {
+        await GroupChat.findByIdAndUpdate(msgId, { $addToSet: { readBy: userId } });
+        io.to(msgId).emit('chat_updated', { type: 'group', msgId, readByUserId: userId });
+      }
+    } catch (e) { console.error('Socket mark_read error:', e); }
+  });
 
-    socket.on('disconnect', () => {
-        // console.log('User disconnected:', socket.id);
-    });
+  socket.on('disconnect', () => {
+    // console.log('User disconnected:', socket.id);
+  });
 });
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
@@ -407,11 +411,11 @@ app.get('/api/live-classes', async (req, res) => {
     let query = {};
     if (teacherId) query.teacherId = teacherId;
     if (groupId) query.groupId = groupId;
-    
+
     if (req.user && req.user.role === 'admin' && !(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
-        query.teacherId = req.user.id;
+      query.teacherId = req.user.id;
     }
-    
+
     // Auto-update status logic based on date/time logic can optionally be placed here,
     // or just parsed by the frontend. We will return them as-is.
     const classes = await LiveClass.find(query).sort({ date: 1, time: 1 });
@@ -424,7 +428,7 @@ app.post('/api/live-classes', async (req, res) => {
   try {
     let body = req.body;
     if (req.user && req.user.role === 'admin' && !(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
-        body.teacherId = req.user.id;
+      body.teacherId = req.user.id;
     }
     const liveClass = new LiveClass(body);
     await liveClass.save();
@@ -438,8 +442,8 @@ app.put('/api/live-classes/:id', async (req, res) => {
     const existing = await LiveClass.findById(req.params.id);
     if (!existing) return res.status(404).json({ success: false, msg: 'الحصة غير موجودة' });
     if (req.user && req.user.role === 'admin' && !(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
-        if (existing.teacherId !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
-        req.body.teacherId = req.user.id;
+      if (existing.teacherId !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
+      req.body.teacherId = req.user.id;
     }
     const liveClass = await LiveClass.findByIdAndUpdate(req.params.id, req.body, { new: true });
     res.json({ success: true, liveClass });
@@ -452,7 +456,7 @@ app.delete('/api/live-classes/:id', async (req, res) => {
     const existing = await LiveClass.findById(req.params.id);
     if (!existing) return res.status(404).json({ success: false });
     if (req.user && req.user.role === 'admin' && !(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
-        if (existing.teacherId !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
+      if (existing.teacherId !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
     }
     await LiveClass.findByIdAndDelete(req.params.id);
     res.json({ success: true });
@@ -474,7 +478,7 @@ app.post('/api/auth/login', async (req, res) => {
 
     if (user.status === 'inactive')
       return res.status(403).json({ success: false, msg: 'حسابك غير نشط حالياً. يرجى انتظار تفعيل الحساب من قبل الإدارة.' });
-    
+
     if (user.status === 'locked')
       return res.status(403).json({ success: false, msg: 'تم إغلاق حسابك، يرجى التواصل مع الإدارة.' });
 
@@ -526,15 +530,15 @@ app.get('/api/users', async (req, res) => {
     let query = {};
     const isSuperAdmin = req.user && req.user.role === 'admin' && ((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin');
     const hasManageTeachers = req.user && req.user.permissions && req.user.permissions.manage_teachers;
-    
+
     if (req.user && req.user.role === 'teacher') {
-        query = { $or: [{ id: req.user.id }, { tenantId: req.user.id }] };
+      query = { $or: [{ id: req.user.id }, { tenantId: req.user.id }] };
     } else if (req.user && req.user.role === 'admin' && !isSuperAdmin) {
-        if (hasManageTeachers) {
-             query = {}; // allow fetching to filter out later or query for teachers specifically
-        } else {
-             query = { $or: [{ id: req.user.id }, { tenantId: req.user.id }] };
-        }
+      if (hasManageTeachers) {
+        query = {}; // allow fetching to filter out later or query for teachers specifically
+      } else {
+        query = { $or: [{ id: req.user.id }, { tenantId: req.user.id }] };
+      }
     }
     const users = await User.find(query);
     res.json(users);
@@ -546,30 +550,30 @@ app.post('/api/users', async (req, res) => {
   try {
     const body = req.body;
     if (!body.id) body.id = generateId();
-    
+
     if (req.user && req.user.role === 'teacher') {
-        body.role = 'student';
-        body.tenantId = req.user.id;
+      body.role = 'student';
+      body.tenantId = req.user.id;
     } else if (req.user && req.user.role === 'admin') {
-        const isSuperAdmin = ((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin');
-        const hasManageTeachers = req.user.permissions && req.user.permissions.manage_teachers;
-        
-        if (!isSuperAdmin) {
-            if (hasManageTeachers && body.role === 'teacher') {
-                body.tenantId = body.id;
-            } else {
-                body.role = 'student';
-                body.tenantId = req.user.id;
-            }
+      const isSuperAdmin = ((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin');
+      const hasManageTeachers = req.user.permissions && req.user.permissions.manage_teachers;
+
+      if (!isSuperAdmin) {
+        if (hasManageTeachers && body.role === 'teacher') {
+          body.tenantId = body.id;
         } else {
-            if ((body.role === 'admin' || body.role === 'teacher') && !(((body.permissions && body.permissions.isOwner) || body.id === 'admin'))) {
-                body.tenantId = body.id;
-            } else {
-                body.tenantId = 'main';
-            }
+          body.role = 'student';
+          body.tenantId = req.user.id;
         }
+      } else {
+        if ((body.role === 'admin' || body.role === 'teacher') && !(((body.permissions && body.permissions.isOwner) || body.id === 'admin'))) {
+          body.tenantId = body.id;
+        } else {
+          body.tenantId = 'main';
+        }
+      }
     } else {
-        body.tenantId = 'main';
+      body.tenantId = 'main';
     }
 
     const user = new User(body);
@@ -593,11 +597,11 @@ app.put('/api/users/:id', async (req, res) => {
     const isSuperAdmin = req.user && req.user.role === 'admin' && ((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin');
     const hasManageTeachers = req.user && req.user.permissions && req.user.permissions.manage_teachers;
     if (req.user && req.user.role === 'teacher') {
-         query = { id: req.params.id, $or: [{ id: req.user.id }, { tenantId: req.user.id }] };
+      query = { id: req.params.id, $or: [{ id: req.user.id }, { tenantId: req.user.id }] };
     } else if (req.user && req.user.role === 'admin' && !isSuperAdmin) {
-         if (!hasManageTeachers) {
-             query = { id: req.params.id, $or: [{ id: req.user.id }, { tenantId: req.user.id }] };
-         }
+      if (!hasManageTeachers) {
+        query = { id: req.params.id, $or: [{ id: req.user.id }, { tenantId: req.user.id }] };
+      }
     }
     const updated = await User.findOneAndUpdate(query, req.body, { new: true }).select('-password');
     if (!updated) return res.status(404).json({ success: false, msg: 'المستخدم غير موجود.' });
@@ -621,11 +625,11 @@ app.delete('/api/users/:id', async (req, res) => {
     const isSuperAdmin = req.user && req.user.role === 'admin' && ((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin');
     const hasManageTeachers = req.user && req.user.permissions && req.user.permissions.manage_teachers;
     if (req.user && req.user.role === 'teacher') {
-         query = { id: req.params.id, $or: [{ id: req.user.id }, { tenantId: req.user.id }] };
+      query = { id: req.params.id, $or: [{ id: req.user.id }, { tenantId: req.user.id }] };
     } else if (req.user && req.user.role === 'admin' && !isSuperAdmin) {
-         if (!hasManageTeachers) {
-             query = { id: req.params.id, $or: [{ id: req.user.id }, { tenantId: req.user.id }] };
-         }
+      if (!hasManageTeachers) {
+        query = { id: req.params.id, $or: [{ id: req.user.id }, { tenantId: req.user.id }] };
+      }
     }
     const deleted = await User.findOneAndDelete(query);
     if (!deleted) return res.status(404).json({ success: false, msg: 'User not found or unauthorized' });
@@ -649,11 +653,11 @@ app.post('/api/honor-board', async (req, res) => {
     const { classId, groupId, students } = req.body;
     if (!classId || !groupId || !Array.isArray(students))
       return res.status(400).json({ success: false, msg: 'بيانات ناقصة.' });
-    
+
     const tenantId = req.tenantId || 'main';
     let doc = await PlatformData.findOne({ docId: tenantId });
     if (!doc) return res.status(404).json({ success: false, msg: 'لا توجد بيانات منصة.' });
-    
+
     if (!doc.data.honorBoard) doc.data.honorBoard = {};
     const key = `${classId}_${groupId}`;
     doc.data.honorBoard[key] = { classId, groupId, students, updatedAt: new Date().toISOString() };
@@ -667,134 +671,134 @@ app.post('/api/honor-board', async (req, res) => {
 
 // GET group messages
 app.get('/api/chat/group/:groupId', async (req, res) => {
-    try {
-        const messages = await GroupChat.find({ groupId: req.params.groupId }).sort({ timestamp: 1 });
-        res.json({ success: true, messages });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+  try {
+    const messages = await GroupChat.find({ groupId: req.params.groupId }).sort({ timestamp: 1 });
+    res.json({ success: true, messages });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // POST group message
 app.post('/api/chat/group', async (req, res) => {
-    try {
-        const { groupId, senderId, senderName, message, replyTo } = req.body;
-        const msg = new GroupChat({ groupId, senderId, senderName, message, replyTo });
-        await msg.save();
-        io.to(groupId).emit('new_message', { type: 'group', message: msg });
-        res.json({ success: true, message: msg });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+  try {
+    const { groupId, senderId, senderName, message, replyTo } = req.body;
+    const msg = new GroupChat({ groupId, senderId, senderName, message, replyTo });
+    await msg.save();
+    io.to(groupId).emit('new_message', { type: 'group', message: msg });
+    res.json({ success: true, message: msg });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // GET private messages
 app.get('/api/chat/private/:uid1/:uid2', async (req, res) => {
-    try {
-        const { uid1, uid2 } = req.params;
-        const messages = await PrivateChat.find({
-            $or: [
-                { senderId: uid1, receiverId: uid2 },
-                { senderId: uid2, receiverId: uid1 }
-            ]
-        }).sort({ timestamp: 1 });
-        res.json({ success: true, messages });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+  try {
+    const { uid1, uid2 } = req.params;
+    const messages = await PrivateChat.find({
+      $or: [
+        { senderId: uid1, receiverId: uid2 },
+        { senderId: uid2, receiverId: uid1 }
+      ]
+    }).sort({ timestamp: 1 });
+    res.json({ success: true, messages });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // POST private message
 app.post('/api/chat/private', async (req, res) => {
-    try {
-        const { senderId, receiverId, senderName, message, replyTo } = req.body;
-        const msg = new PrivateChat({ senderId, receiverId, senderName, message, replyTo });
-        await msg.save();
+  try {
+    const { senderId, receiverId, senderName, message, replyTo } = req.body;
+    const msg = new PrivateChat({ senderId, receiverId, senderName, message, replyTo });
+    await msg.save();
 
-        const room = [senderId, receiverId].sort().join('_');
-        io.to(room).emit('new_message', { type: 'private', message: msg });
-        
-        // Also notify the receiver individually for badges
-        io.to(receiverId).emit('unread_badge', { type: 'private', senderId });
+    const room = [senderId, receiverId].sort().join('_');
+    io.to(room).emit('new_message', { type: 'private', message: msg });
 
-        res.json({ success: true, message: msg });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    // Also notify the receiver individually for badges
+    io.to(receiverId).emit('unread_badge', { type: 'private', senderId });
+
+    res.json({ success: true, message: msg });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // TOGGLE pin message
 app.put('/api/chat/:type/:msgId/pin', async (req, res) => {
-    try {
-        const { type, msgId } = req.params;
-        const Model = type === 'group' ? GroupChat : PrivateChat;
-        const msg = await Model.findById(msgId);
-        if (!msg) return res.status(404).json({ success: false, msg: 'الرسالة غير موجودة.' });
-        msg.isPinned = !msg.isPinned;
-        await msg.save();
-        res.json({ success: true, isPinned: msg.isPinned });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+  try {
+    const { type, msgId } = req.params;
+    const Model = type === 'group' ? GroupChat : PrivateChat;
+    const msg = await Model.findById(msgId);
+    if (!msg) return res.status(404).json({ success: false, msg: 'الرسالة غير موجودة.' });
+    msg.isPinned = !msg.isPinned;
+    await msg.save();
+    res.json({ success: true, isPinned: msg.isPinned });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // DELETE message
 app.delete('/api/chat/:type/:msgId', async (req, res) => {
-    try {
-        const { type, msgId } = req.params;
-        const Model = type === 'group' ? GroupChat : PrivateChat;
-        await Model.findByIdAndDelete(msgId);
-        res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+  try {
+    const { type, msgId } = req.params;
+    const Model = type === 'group' ? GroupChat : PrivateChat;
+    await Model.findByIdAndDelete(msgId);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ─── NOTIFICATIONS API ────────────────────────────────────────────────────────
 
 app.post('/api/notifications/notify-group', async (req, res) => {
-    try {
-        const { group_id, title, type, link } = req.body;
-        if (!group_id || !title) return res.status(400).json({ success: false, msg: 'Missing parameters.' });
+  try {
+    const { group_id, title, type, link } = req.body;
+    if (!group_id || !title) return res.status(400).json({ success: false, msg: 'Missing parameters.' });
 
-        const users = await User.find({ groupId: group_id });
-        if (!users || users.length === 0) return res.json({ success: true, count: 0 });
+    const users = await User.find({ groupId: group_id });
+    if (!users || users.length === 0) return res.json({ success: true, count: 0 });
 
-        const notifications = users.map(user => ({
-            userId: user.id,
-            title: 'تم إضافة محتوى جديد',
-            details: title,
-            type: type || 'lesson',
-            link: link || '',
-            isRead: false
-        }));
+    const notifications = users.map(user => ({
+      userId: user.id,
+      title: 'تم إضافة محتوى جديد',
+      details: title,
+      type: type || 'lesson',
+      link: link || '',
+      isRead: false
+    }));
 
-        await Notification.insertMany(notifications);
+    await Notification.insertMany(notifications);
 
-        users.forEach(user => {
-            io.to(user.id).emit('new_notification', {
-                title: 'تم إضافة محتوى جديد',
-                details: title,
-                type: type || 'lesson',
-                link: link || '',
-                createdAt: new Date()
-            });
-        });
+    users.forEach(user => {
+      io.to(user.id).emit('new_notification', {
+        title: 'تم إضافة محتوى جديد',
+        details: title,
+        type: type || 'lesson',
+        link: link || '',
+        createdAt: new Date()
+      });
+    });
 
-        res.json({ success: true, count: users.length });
-    } catch (e) {
-        console.error('Notify Group Error:', e.message);
-        res.status(500).json({ error: e.message });
-    }
+    res.json({ success: true, count: users.length });
+  } catch (e) {
+    console.error('Notify Group Error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.get('/api/notifications/:userId', async (req, res) => {
-    try {
-        const notifications = await Notification.find({ userId: req.params.userId }).sort({ createdAt: -1 }).limit(50);
-        res.json({ success: true, notifications });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+  try {
+    const notifications = await Notification.find({ userId: req.params.userId }).sort({ createdAt: -1 }).limit(50);
+    res.json({ success: true, notifications });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.put('/api/notifications/:id/read', async (req, res) => {
-    try {
-        await Notification.findByIdAndUpdate(req.params.id, { isRead: true });
-        res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+  try {
+    await Notification.findByIdAndUpdate(req.params.id, { isRead: true });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 /** PUT  /api/users/:id/reset-device  → clear deviceId lock */
 app.put('/api/users/:id/reset-device', async (req, res) => {
   try {
     let query = { id: req.params.id };
     if (req.user && req.user.role === 'admin' && !(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
-        query.tenantId = req.user.id;
+      query.tenantId = req.user.id;
     }
     const updated = await User.findOneAndUpdate(query, { deviceId: '' });
     if (!updated) return res.status(404).json({ success: false, msg: 'المستخدم غير موجود' });
@@ -808,7 +812,7 @@ app.put('/api/users/:id/progress', async (req, res) => {
     const { lessonId, xpReward, score, answers } = req.body;
     const user = await User.findOne({ id: req.params.id });
     if (!user) return res.status(404).json({ success: false });
-    
+
     // Always update or set the quiz score and answers if provided
     if (score !== undefined) {
       if (typeof user.quizScores !== 'object') user.quizScores = {};
@@ -826,10 +830,10 @@ app.put('/api/users/:id/progress', async (req, res) => {
       user.xp = (user.xp || 0) + (xpReward || 50);
     }
     await user.save();
-    
-    res.json({ 
-      success: true, 
-      xp: user.xp, 
+
+    res.json({
+      success: true,
+      xp: user.xp,
       completedLessons: user.completedLessons,
       quizScores: user.quizScores,
       quizAnswers: user.quizAnswers
@@ -841,9 +845,9 @@ app.put('/api/users/:id/progress', async (req, res) => {
 app.post('/api/seed', async (req, res) => {
   try {
     const demos = [
-      { id: '2024001', name: 'طالب Numi',  phone: '01000000000', password: '2024001', role: 'student', status: 'inactive' },
-      { id: '12345',   name: 'أحمد محمد',  phone: '01012345678', password: '12345',   role: 'student', status: 'inactive' },
-      { id: 'admin',   name: 'المدير العام', phone: '01099999999', password: 'Numi@2026', role: 'admin', status: 'active' }
+      { id: '2024001', name: 'طالب Numi', phone: '01000000000', password: '2024001', role: 'student', status: 'inactive' },
+      { id: '12345', name: 'أحمد محمد', phone: '01012345678', password: '12345', role: 'student', status: 'inactive' },
+      { id: 'admin', name: 'المدير العام', phone: '01099999999', password: 'Numi@2026', role: 'admin', status: 'active' }
     ];
     for (const d of demos) {
       await User.updateOne({ id: d.id }, { $set: d }, { upsert: true });
@@ -855,96 +859,96 @@ app.post('/api/seed', async (req, res) => {
 // ─── QUIZ ATTEMPT ROUTES ──────────────────────────────────────────────────────
 /** GET Check attempt status */
 app.get('/api/quiz/attempts/:userId/:lessonId', async (req, res) => {
-    try {
-        const { userId, lessonId } = req.params;
-        // Search for attempt with flexible matching
-        const attempt = await QuizAttempt.findOne({ userId, lessonId }).sort({ createdAt: -1 });
-        res.json(attempt || null);
-    } catch (e) {
-        console.error('Quiz Status Retrieval Error:', e.message);
-        res.status(500).json({ error: 'Database access failed' });
-    }
+  try {
+    const { userId, lessonId } = req.params;
+    // Search for attempt with flexible matching
+    const attempt = await QuizAttempt.findOne({ userId, lessonId }).sort({ createdAt: -1 });
+    res.json(attempt || null);
+  } catch (e) {
+    console.error('Quiz Status Retrieval Error:', e.message);
+    res.status(500).json({ error: 'Database access failed' });
+  }
 });
 
 /** POST Start a new attempt */
 app.post('/api/quiz/attempts/start', async (req, res) => {
-    try {
-        const { userId, lessonId, deviceId, initialTime } = req.body;
-        
-        // Find the latest attempt
-        let attempt = await QuizAttempt.findOne({ userId, lessonId }).sort({ attemptNum: -1 });
-        
-        if (attempt) {
-            // If the latest is completed, and we haven't explicitely started a new numbered one...
-            // Wait, if it's completed, student can't restart unless admin created a new 'pending' one.
-            if (attempt.status === 'completed') {
-                return res.json({ success: false, msg: 'AlreadyCompleted', attempt });
-            }
-            
-            if (attempt.deviceId && attempt.deviceId !== deviceId) {
-                return res.status(403).json({ success: false, msg: 'MultipleDevice' });
-            }
-            return res.json({ success: true, attempt });
-        }
-        
-        // Create first attempt if none exists
-        attempt = await QuizAttempt.create({ userId, lessonId, deviceId, remainingTime: initialTime, attemptNum: 1 });
-        res.json({ success: true, attempt });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+  try {
+    const { userId, lessonId, deviceId, initialTime } = req.body;
+
+    // Find the latest attempt
+    let attempt = await QuizAttempt.findOne({ userId, lessonId }).sort({ attemptNum: -1 });
+
+    if (attempt) {
+      // If the latest is completed, and we haven't explicitely started a new numbered one...
+      // Wait, if it's completed, student can't restart unless admin created a new 'pending' one.
+      if (attempt.status === 'completed') {
+        return res.json({ success: false, msg: 'AlreadyCompleted', attempt });
+      }
+
+      if (attempt.deviceId && attempt.deviceId !== deviceId) {
+        return res.status(403).json({ success: false, msg: 'MultipleDevice' });
+      }
+      return res.json({ success: true, attempt });
+    }
+
+    // Create first attempt if none exists
+    attempt = await QuizAttempt.create({ userId, lessonId, deviceId, remainingTime: initialTime, attemptNum: 1 });
+    res.json({ success: true, attempt });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 /** PUT Sync attempt (answers & time) */
 app.put('/api/quiz/attempts/:userId/:lessonId/sync', async (req, res) => {
-    try {
-        const { answers, remainingTime, deviceId } = req.body;
-        // Find the latest pending attempt
-        const attempt = await QuizAttempt.findOne({ 
-            userId: req.params.userId, 
-            lessonId: req.params.lessonId,
-            status: 'in-progress'
-        }).sort({ attemptNum: -1 });
+  try {
+    const { answers, remainingTime, deviceId } = req.body;
+    // Find the latest pending attempt
+    const attempt = await QuizAttempt.findOne({
+      userId: req.params.userId,
+      lessonId: req.params.lessonId,
+      status: 'in-progress'
+    }).sort({ attemptNum: -1 });
 
-        if (!attempt) return res.json({ success: false });
-        if (attempt.deviceId && attempt.deviceId !== deviceId) return res.status(403).json({ error: 'DeviceMismatch' });
-        
-        attempt.answers = answers;
-        attempt.remainingTime = remainingTime;
-        await attempt.save();
-        res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    if (!attempt) return res.json({ success: false });
+    if (attempt.deviceId && attempt.deviceId !== deviceId) return res.status(403).json({ error: 'DeviceMismatch' });
+
+    attempt.answers = answers;
+    attempt.remainingTime = remainingTime;
+    await attempt.save();
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 /** POST Submit attempt */
 app.post('/api/quiz/attempts/:userId/:lessonId/submit', async (req, res) => {
-    try {
-        const { score, answers, deviceId } = req.body;
-        // Find the latest pending attempt
-        const attempt = await QuizAttempt.findOne({ 
-            userId: req.params.userId, 
-            lessonId: req.params.lessonId,
-            status: 'in-progress'
-        }).sort({ attemptNum: -1 });
+  try {
+    const { score, answers, deviceId } = req.body;
+    // Find the latest pending attempt
+    const attempt = await QuizAttempt.findOne({
+      userId: req.params.userId,
+      lessonId: req.params.lessonId,
+      status: 'in-progress'
+    }).sort({ attemptNum: -1 });
 
-        if (!attempt) return res.json({ success: false });
-        if (attempt.deviceId && attempt.deviceId !== deviceId) return res.status(403).json({ error: 'DeviceMismatch' });
-        
-        attempt.score = score;
-        attempt.answers = answers;
-        attempt.status = 'completed';
-        attempt.endTime = new Date();
-        attempt.remainingTime = 0;
-        await attempt.save();
-        res.json({ success: true, attempt });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    if (!attempt) return res.json({ success: false });
+    if (attempt.deviceId && attempt.deviceId !== deviceId) return res.status(403).json({ error: 'DeviceMismatch' });
+
+    attempt.score = score;
+    attempt.answers = answers;
+    attempt.status = 'completed';
+    attempt.endTime = new Date();
+    attempt.remainingTime = 0;
+    await attempt.save();
+    res.json({ success: true, attempt });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 /** AI Lesson Generator */
 app.post('/api/lesson/generate', async (req, res) => {
-    try {
-        const { keywords } = req.body;
-        if (!keywords) return res.status(400).json({ error: 'Keywords are required.' });
+  try {
+    const { keywords } = req.body;
+    if (!keywords) return res.status(400).json({ error: 'Keywords are required.' });
 
-        const systemPrompt = `
+    const systemPrompt = `
 أنت مصمم ومنشئ محتوى تعليمي تفاعلي محترف.
 مهمتك هي إنشاء درس تفاعلي بصيغة HTML متكاملة ليعمل داخل iframe في منصة تعتمد على النمط المظلم (Dark Mode / Cosmic Theme).
 عليك إنشاء المحتوى التعليمي للدرس بناءً على الموضوع المطلوب، ثم دمج هذا المحتوى داخل قالب الـ HTML المبين أدناه.
@@ -1059,30 +1063,30 @@ function checkAnswer(btn, isCorrect, qId) {
 اجعل الشرح غنياً، وأضف تفاعلات مفيدة ومحتوى غني وأمثلة واضحة وأسئلة تفاعلية حقيقية تعمل بـ JS.
 `;
 
-        const completion = await openai.chat.completions.create({
-            model: 'gpt-4o',
-            messages: [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: `قم بإنشاء الدرس الآن للكلمات المفتاحية: ${keywords}` }
-            ]
-        });
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: `قم بإنشاء الدرس الآن للكلمات المفتاحية: ${keywords}` }
+      ]
+    });
 
-        const reply = completion.choices[0].message.content.trim();
-        const html = reply.replace(/^```html|```$/gi, '').trim();
-        res.json({ success: true, html });
-    } catch (e) {
-        console.error('Lesson Gen Error:', e.message);
-        res.status(500).json({ error: 'تعذر توليف الدرس حالياً.' });
-    }
+    const reply = completion.choices[0].message.content.trim();
+    const html = reply.replace(/^```html|```$/gi, '').trim();
+    res.json({ success: true, html });
+  } catch (e) {
+    console.error('Lesson Gen Error:', e.message);
+    res.status(500).json({ error: 'تعذر توليف الدرس حالياً.' });
+  }
 });
 
 /** AI Quiz Generator for Teachers */
 app.post('/api/quiz/generate', async (req, res) => {
-    try {
-        const { text, language } = req.body;
-        if (!text) return res.status(400).json({ error: 'Text is required.' });
+  try {
+    const { text, language } = req.body;
+    if (!text) return res.status(400).json({ error: 'Text is required.' });
 
-        const systemPrompt = `
+    const systemPrompt = `
 أنت مساعد ذكي للمعلمين، وظيفتك تحويل الأسئلة المكتوبة من المعلم إلى اختبارات منظمة بصيغة JSON.
 تلقائيًا، افهم كل سؤال وحدد نوعه (mcq, short, boolean).
 تنسيق الـ JSON المطلوب:
@@ -1107,55 +1111,55 @@ app.post('/api/quiz/generate', async (req, res) => {
 3. الإخراج يجب أن يكون JSON صالح فقط بدون نص إضافي.
 `;
 
-        const completion = await openai.chat.completions.create({
-            model: 'gpt-4o',
-            messages: [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: text }
-            ],
-            response_format: { type: "json_object" }
-        });
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: text }
+      ],
+      response_format: { type: "json_object" }
+    });
 
-        res.json(JSON.parse(completion.choices[0].message.content));
-    } catch (e) {
-        console.error('Quiz Gen Error:', e.message);
-        res.status(500).json({ error: 'تعذر توليف الاختبار حالياً.' });
-    }
+    res.json(JSON.parse(completion.choices[0].message.content));
+  } catch (e) {
+    console.error('Quiz Gen Error:', e.message);
+    res.status(500).json({ error: 'تعذر توليف الاختبار حالياً.' });
+  }
 });
 
 // ─── CHAT SESSION ROUTES ──────────────────────────────────────────────────────
 /** Start a new chat session for a user */
 app.post('/api/chat/session/new', async (req, res) => {
-    try {
-        const { userId } = req.body;
-        if (!userId) return res.status(400).json({ error: 'UserID is required.' });
-        const sessionId = generateId();
-        const session = await ChatSession.create({ id: sessionId, userId, messages: [] });
-        res.json({ success: true, sessionId });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+  try {
+    const { userId } = req.body;
+    if (!userId) return res.status(400).json({ error: 'UserID is required.' });
+    const sessionId = generateId();
+    const session = await ChatSession.create({ id: sessionId, userId, messages: [] });
+    res.json({ success: true, sessionId });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 /** Get all previous sessions for a user */
 app.get('/api/chat/history/:userId', async (req, res) => {
-    try {
-        const sessions = await ChatSession.find({ userId: req.params.userId }).sort({ createdAt: -1 });
-        res.json(sessions);
-    } catch (e) { res.status(500).json({ error: e.message }); }
+  try {
+    const sessions = await ChatSession.find({ userId: req.params.userId }).sort({ createdAt: -1 });
+    res.json(sessions);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ─── AI CHAT ROUTE ───────────────────────────────────────────────────────────
 app.post('/api/chat', async (req, res) => {
   try {
     const { message, history, studentGrade, userId, sessionId } = req.body;
-    
+
     // If sessionId provided, save the USER message first
     if (sessionId) {
-        await ChatSession.updateOne(
-            { id: sessionId },
-            { $push: { messages: { isUser: true, text: message, timestamp: new Date() } } }
-        );
+      await ChatSession.updateOne(
+        { id: sessionId },
+        { $push: { messages: { isUser: true, text: message, timestamp: new Date() } } }
+      );
     }
-    
+
     const systemPrompt = `
 أنت مدرس رياضيات محترف، مساعد لكل طالب على المنصة.
 
@@ -1209,10 +1213,10 @@ app.post('/api/chat', async (req, res) => {
 
     // Save BOT message
     if (sessionId) {
-        await ChatSession.updateOne(
-            { id: sessionId },
-            { $push: { messages: { isUser: false, text: reply, timestamp: new Date() } } }
-        );
+      await ChatSession.updateOne(
+        { id: sessionId },
+        { $push: { messages: { isUser: false, text: reply, timestamp: new Date() } } }
+      );
     }
 
     res.json({ success: true, reply });
@@ -1227,142 +1231,142 @@ app.post('/api/chat', async (req, res) => {
 
 /** ADMIN: Get lesson reports */
 app.get('/api/admin/reports/:lessonId', async (req, res) => {
-    try {
-        console.log("Fetching reports for lesson:", req.params.lessonId);
-        const attempts = await QuizAttempt.find({ lessonId: req.params.lessonId }).lean();
-        
-        if(!attempts || attempts.length === 0) {
-            console.log("No completed attempts found.");
-            return res.json([]);
-        }
+  try {
+    console.log("Fetching reports for lesson:", req.params.lessonId);
+    const attempts = await QuizAttempt.find({ lessonId: req.params.lessonId }).lean();
 
-        // Get unique user identifiers from attempts
-        const rawUserIds = [...new Set(attempts.map(a => String(a.userId)).filter(Boolean))];
-        
-        const validObjectIds = [];
-        const phoneStrings = [];
-
-        // Rigorous classification of user IDs
-        for (const id of rawUserIds) {
-            try {
-                // If it's a 24-char string and can be converted to ObjectId, it's an ID
-                if (id.length === 24) {
-                    new mongoose.Types.ObjectId(id); // Test conversion
-                    validObjectIds.push(id);
-                } else {
-                    phoneStrings.push(id);
-                }
-            } catch (e) {
-                // Not a valid ObjectId (must be a phone number)
-                phoneStrings.push(id);
-            }
-        }
-        
-        let userQuery = {};
-        if (req.user && req.user.role === 'admin' && !(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
-            userQuery.tenantId = req.user.id;
-        }
-        
-        const [usersById, usersByPhone] = await Promise.all([
-            User.find({ _id: { $in: validObjectIds }, ...userQuery }).lean(),
-            User.find({ phone: { $in: phoneStrings }, ...userQuery }).lean()
-        ]);
-        
-        const allMatchedUsers = [...usersById, ...usersByPhone];
-        
-        const report = attempts.map(attempt => {
-            const uid = String(attempt.userId);
-            const user = allMatchedUsers.find(u => 
-                u._id.toString() === uid || 
-                u.phone === uid
-            );
-            return {
-                ...attempt,
-                studentName: user ? user.name : 'طالب (بيانات ناقصة)',
-                studentGroup: user ? user.groupId : '---',
-                studentPhone: user ? user.phone : (uid.length < 15 ? uid : '---')
-            };
-        });
-        console.log(`Report generated with ${report.length} students.`);
-        res.json(report);
-    } catch (e) { 
-        console.error("REPORT ERROR:", e);
-        res.status(500).json({ error: "خطأ تقني: " + e.message }); 
+    if (!attempts || attempts.length === 0) {
+      console.log("No completed attempts found.");
+      return res.json([]);
     }
+
+    // Get unique user identifiers from attempts
+    const rawUserIds = [...new Set(attempts.map(a => String(a.userId)).filter(Boolean))];
+
+    const validObjectIds = [];
+    const phoneStrings = [];
+
+    // Rigorous classification of user IDs
+    for (const id of rawUserIds) {
+      try {
+        // If it's a 24-char string and can be converted to ObjectId, it's an ID
+        if (id.length === 24) {
+          new mongoose.Types.ObjectId(id); // Test conversion
+          validObjectIds.push(id);
+        } else {
+          phoneStrings.push(id);
+        }
+      } catch (e) {
+        // Not a valid ObjectId (must be a phone number)
+        phoneStrings.push(id);
+      }
+    }
+
+    let userQuery = {};
+    if (req.user && req.user.role === 'admin' && !(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
+      userQuery.tenantId = req.user.id;
+    }
+
+    const [usersById, usersByPhone] = await Promise.all([
+      User.find({ _id: { $in: validObjectIds }, ...userQuery }).lean(),
+      User.find({ phone: { $in: phoneStrings }, ...userQuery }).lean()
+    ]);
+
+    const allMatchedUsers = [...usersById, ...usersByPhone];
+
+    const report = attempts.map(attempt => {
+      const uid = String(attempt.userId);
+      const user = allMatchedUsers.find(u =>
+        u._id.toString() === uid ||
+        u.phone === uid
+      );
+      return {
+        ...attempt,
+        studentName: user ? user.name : 'طالب (بيانات ناقصة)',
+        studentGroup: user ? user.groupId : '---',
+        studentPhone: user ? user.phone : (uid.length < 15 ? uid : '---')
+      };
+    });
+    console.log(`Report generated with ${report.length} students.`);
+    res.json(report);
+  } catch (e) {
+    console.error("REPORT ERROR:", e);
+    res.status(500).json({ error: "خطأ تقني: " + e.message });
+  }
 });
 
 
 /** ADMIN: Reset quiz attempts for a student on a lesson + set 2-day deadline */
 app.delete('/api/admin/reports/:lessonId/user/:userId', async (req, res) => {
+  try {
+    const { lessonId, userId } = req.params;
+    const days = parseInt(req.query.days) || 2;
+    const deadline = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+
+    // 1) Delete all their attempts for this lesson
+    const result = await QuizAttempt.deleteMany({ lessonId, userId });
+    console.log(`Reset quiz: deleted ${result.deletedCount} attempts for user ${userId}`);
+
+    // 2) Store reset window in the user document (try ObjectId first, then phone)
+    const resetField = `quizResets.${lessonId.replace(/\./g, '_')}`;
+    const resetValue = { allowedUntil: deadline, resetAt: new Date(), days };
+    let updated = false;
+
+    // Try as ObjectId
     try {
-        const { lessonId, userId } = req.params;
-        const days = parseInt(req.query.days) || 2;
-        const deadline = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+      if (userId.length === 24) {
+        const u = await User.findByIdAndUpdate(
+          userId,
+          { $set: { [resetField]: resetValue } },
+          { new: true, upsert: false }
+        );
+        if (u) updated = true;
+      }
+    } catch (e) { }
 
-        // 1) Delete all their attempts for this lesson
-        const result = await QuizAttempt.deleteMany({ lessonId, userId });
-        console.log(`Reset quiz: deleted ${result.deletedCount} attempts for user ${userId}`);
-
-        // 2) Store reset window in the user document (try ObjectId first, then phone)
-        const resetField = `quizResets.${lessonId.replace(/\./g, '_')}`;
-        const resetValue = { allowedUntil: deadline, resetAt: new Date(), days };
-        let updated = false;
-
-        // Try as ObjectId
-        try {
-            if (userId.length === 24) {
-                const u = await User.findByIdAndUpdate(
-                    userId,
-                    { $set: { [resetField]: resetValue } },
-                    { new: true, upsert: false }
-                );
-                if (u) updated = true;
-            }
-        } catch(e) {}
-
-        // Fallback: try by phone
-        if (!updated) {
-            await User.findOneAndUpdate(
-                { phone: userId },
-                { $set: { [resetField]: resetValue } }
-            );
-        }
-
-        res.json({ success: true, deletedCount: result.deletedCount, deadline, days });
-    } catch (e) {
-        console.error('Reset quiz error:', e);
-        res.status(500).json({ success: false, error: e.message });
+    // Fallback: try by phone
+    if (!updated) {
+      await User.findOneAndUpdate(
+        { phone: userId },
+        { $set: { [resetField]: resetValue } }
+      );
     }
+
+    res.json({ success: true, deletedCount: result.deletedCount, deadline, days });
+  } catch (e) {
+    console.error('Reset quiz error:', e);
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 /** STUDENT: Check quiz reset window */
 app.get('/api/quiz-reset-check/:userId/:lessonId', async (req, res) => {
-    try {
-        const { userId, lessonId } = req.params;
-        const safeKey = lessonId.replace(/\./g, '_');
-        let user = null;
-        try { if (userId.length === 24) user = await User.findById(userId).lean(); } catch(e) {}
-        if (!user) user = await User.findOne({ phone: userId }).lean();
-        if (!user) return res.json({ hasReset: false });
+  try {
+    const { userId, lessonId } = req.params;
+    const safeKey = lessonId.replace(/\./g, '_');
+    let user = null;
+    try { if (userId.length === 24) user = await User.findById(userId).lean(); } catch (e) { }
+    if (!user) user = await User.findOne({ phone: userId }).lean();
+    if (!user) return res.json({ hasReset: false });
 
-        const resetData = user.quizResets?.[safeKey];
-        if (!resetData) return res.json({ hasReset: false });
+    const resetData = user.quizResets?.[safeKey];
+    if (!resetData) return res.json({ hasReset: false });
 
-        const now = new Date();
-        const deadline = new Date(resetData.allowedUntil);
-        const expired = now > deadline;
+    const now = new Date();
+    const deadline = new Date(resetData.allowedUntil);
+    const expired = now > deadline;
 
-        res.json({
-            hasReset: true,
-            allowedUntil: resetData.allowedUntil,
-            resetAt: resetData.resetAt,
-            days: resetData.days || 2,
-            expired,
-            hoursLeft: expired ? 0 : Math.ceil((deadline - now) / 3600000)
-        });
-    } catch(e) {
-        res.status(500).json({ hasReset: false, error: e.message });
-    }
+    res.json({
+      hasReset: true,
+      allowedUntil: resetData.allowedUntil,
+      resetAt: resetData.resetAt,
+      days: resetData.days || 2,
+      expired,
+      hoursLeft: expired ? 0 : Math.ceil((deadline - now) / 3600000)
+    });
+  } catch (e) {
+    res.status(500).json({ hasReset: false, error: e.message });
+  }
 });
 
 const PORT = process.env.PORT || 5000;

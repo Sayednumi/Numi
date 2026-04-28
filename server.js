@@ -97,14 +97,15 @@ const PlatformDataSchema = new mongoose.Schema({
 }, { timestamps: true });
 const PlatformData = mongoose.model('PlatformData', PlatformDataSchema);
 
-// User: students & admins
+// User: students, admins, teachers, managers
 const UserSchema = new mongoose.Schema({
   id: { type: String, unique: true, required: true },
   name: { type: String, required: true },
   phone: { type: String, unique: true, required: true },
   password: { type: String, default: '' },       // student code / password
-  role: { type: String, default: 'student' }, // 'student' | 'admin'
+  role: { type: String, default: 'student', enum: ['student', 'admin', 'manager', 'teacher'] },
   tenantId: { type: String, default: 'main' },
+  academyId: { type: String, default: null },    // Reserved for future multi-school support
   status: { type: String, default: 'inactive' }, // 'active' | 'inactive' | 'locked'
   classId: { type: String, default: '' },
   groupId: { type: String, default: '' },
@@ -120,7 +121,11 @@ const UserSchema = new mongoose.Schema({
   avatar: { type: String, default: '' },
   permissions: { type: mongoose.Schema.Types.Mixed, default: {} },
   liveStats: { type: mongoose.Schema.Types.Mixed, default: { totalSessions: 0, completedSessions: 0 } },
-  quizResets: { type: mongoose.Schema.Types.Mixed, default: {} } // lessonId -> { allowedUntil, resetAt }
+  quizResets: { type: mongoose.Schema.Types.Mixed, default: {} }, // lessonId -> { allowedUntil, resetAt }
+  // ─── Role/Subject System ─────────────────────────────────
+  subject:        { type: String, default: null },           // Self-selected subject (teacher/student)
+  subjectSource:  { type: String, default: 'default', enum: ['manager', 'teacher', 'default'] },
+  managerSubject: { type: String, default: null },           // Manager-assigned override (highest priority)
 }, { timestamps: true });
 const User = mongoose.model('User', UserSchema);
 

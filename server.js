@@ -53,10 +53,17 @@ app.use(async (req, res, next) => {
 app.use(express.static(path.join(__dirname, '..', 'public')));
 // Also serve src folder so frontend can access assets, styles, etc.
 app.use('/src', express.static(path.join(__dirname, '..', 'src')));
-// Serve root folder as fallback for backwards compatibility
-app.use(express.static(path.join(__dirname, '..')));
-// Serve admin panel from parent Numi folder
-app.use(express.static(path.join(__dirname, '..', '..')));
+
+// Explicit root route to ensure student platform is served
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
+});
+
+// Explicit admin route to ensure admin dashboard is served
+app.get('/admin', (req, res) => {
+    res.sendFile(path.join(__dirname, '..', 'public', 'admin.html'));
+});
+
 
 // ─── MongoDB Connection ───────────────────────────────────────────────────────
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/numi_local_db';

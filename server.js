@@ -55,6 +55,13 @@ app.use(async (req, res, next) => {
   } else {
     req.tenantId = req.query.tenantId || 'main';
   }
+
+  // Track Activity & First Login
+  if (req.user && req.tenantId && req.tenantId !== 'global') {
+    updateActivationMetric(req.tenantId, 'firstLoginAt');
+    Organization.updateOne({ id: req.tenantId }, { lastActivityAt: new Date() }).exec().catch(() => {});
+  }
+
   next();
 });
 
@@ -280,17 +287,46 @@ async function createAuditLog(req, action, targetOrg, details) {
   }
 }
 
+// Helper for Activation Tracking
+async function updateActivationMetric(tenantId, metricName) {
+  try {
+    const update = { lastActivityAt: new Date() };
+    update[`activationMetrics.${metricName}`] = new Date();
+    
+    // Only set if not already set (using $exists: false)
+    await Organization.updateOne(
+      { id: tenantId, [`activationMetrics.${metricName}`]: { $exists: false } },
+      { $set: update }
+    );
+  } catch (err) { console.error('[Activation] Error:', err.message); }
+}
+
 const OrganizationSchema = new mongoose.Schema({
   id: { type: String, required: true, unique: true },
   name: { type: String, required: true },
-  type: { type: String, enum: ['school', 'academy'], required: true },
+  type: { type: String, enum: ['school', 'academy', 'individual'], required: true },
   adminId: { type: String }, 
   address: { type: String },
+  country: { type: String, default: 'Egypt' },
   subscriptionPlan: { type: String, enum: ['free', 'basic', 'pro'], default: 'free' },
   subscriptionStatus: { type: String, enum: ['active', 'expired', 'trial'], default: 'trial' },
   subscriptionExpiresAt: { type: Date, default: () => new Date(+new Date() + 30*24*60*60*1000) }, // 30 days trial
   aiUsageLimitPerMonth: { type: Number, default: 50 },
   aiUsageCurrentMonth: { type: Number, default: 0 },
+  
+  // Growth & Onboarding
+  onboardingStatus: { type: String, enum: ['pending', 'active', 'completed'], default: 'pending' },
+  numberOfTeachers: { type: Number, default: 0 },
+  numberOfStudents: { type: Number, default: 0 },
+  
+  // Activation Metrics
+  activationMetrics: {
+    firstLoginAt: { type: Date },
+    firstClassCreatedAt: { type: Date },
+    firstStudentAddedAt: { type: Date },
+    firstAIUsageAt: { type: Date }
+  },
+  lastActivityAt: { type: Date, default: Date.now },
   createdAt: { type: Date, default: Date.now }
 });
 const Organization = mongoose.model('Organization', OrganizationSchema);
@@ -348,11 +384,12 @@ async function checkAIUsage(req, res, next) {
 
 async function incrementAIUsage(tenantId) {
   try {
-    await Organization.findOneAndUpdate(
+    await Organization.updateOne(
       { id: tenantId },
-      { $inc: { aiUsageCurrentMonth: 1 } }
+      { $inc: { aiUsageCurrentMonth: 1 }, $set: { lastActivityAt: new Date() } }
     );
-  } catch (e) { console.error('[Subscription] Failed to increment AI usage', e); }
+    updateActivationMetric(tenantId, 'firstAIUsageAt');
+  } catch (err) { console.error('[Subscription] Failed to increment AI usage', err); }
 }
 
 // ─── TEACHER PLATFORMS ROUTES ─────────────────────────────────────────────────
@@ -619,6 +656,7 @@ app.post('/api/platform-data', async (req, res) => {
       doc.markModified('data');
     }
     await doc.save();
+    updateActivationMetric(tenantId, 'firstClassCreatedAt');
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -782,6 +820,7 @@ app.post('/api/auth/register', async (req, res) => {
     });
 
     await newUser.save();
+    if (newUser.role === 'student') updateActivationMetric(req.tenantId || 'main', 'firstStudentAddedAt');
     const { password: _p, ...safeUser } = newUser.toObject();
     res.json({ success: true, user: safeUser });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -840,6 +879,7 @@ app.post('/api/users', async (req, res) => {
 
     const user = new User(body);
     await user.save();
+    if (user.role === 'student') updateActivationMetric(user.tenantId, 'firstStudentAddedAt');
     const { password: _p, ...safeUser } = user.toObject();
     res.json({ success: true, user: safeUser });
   } catch (e) {
@@ -1786,6 +1826,59 @@ app.get('/api/finance/audit', async (req, res) => {
     res.json({ success: true, data: logs });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+/** 📈 GROWTH ANALYTICS (Super Admin) */
+app.get('/api/growth/stats', async (req, res) => {
+  if (!isPlatformOwner(req)) return res.status(403).json({ success: false, message: 'Unauthorized' });
+  try {
+    const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    
+    const newSchoolsThisWeek = await Organization.countDocuments({ createdAt: { $gte: oneWeekAgo } });
+    const totalOrgs = await Organization.countDocuments();
+    const activeOrgs = await Organization.countDocuments({ lastActivityAt: { $gte: oneWeekAgo } });
+    
+    const onboardingCompleted = await Organization.countDocuments({ onboardingStatus: 'completed' });
+    
+    const activationData = await Organization.aggregate([
+      { $group: {
+        _id: null,
+        firstLogin: { $sum: { $cond: ["$activationMetrics.firstLoginAt", 1, 0] } },
+        firstClass: { $sum: { $cond: ["$activationMetrics.firstClassCreatedAt", 1, 0] } },
+        firstStudent: { $sum: { $cond: ["$activationMetrics.firstStudentAddedAt", 1, 0] } },
+        firstAI: { $sum: { $cond: ["$activationMetrics.firstAIUsageAt", 1, 0] } }
+      }}
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        newSchoolsThisWeek,
+        totalOrgs,
+        activeOrgs,
+        inactiveOrgs: totalOrgs - activeOrgs,
+        onboardingCompletionRate: totalOrgs > 0 ? (onboardingCompleted / totalOrgs) * 100 : 0,
+        activationRates: activationData[0] || {}
+      }
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/** Update Onboarding Status */
+app.post('/api/organizations/:id/onboarding', async (req, res) => {
+  try {
+    const { status, numberOfTeachers, numberOfStudents, country } = req.body;
+    const org = await Organization.findOne({ id: req.params.id });
+    if (!org) return res.status(404).json({ success: false });
+
+    if (status) org.onboardingStatus = status;
+    if (numberOfTeachers) org.numberOfTeachers = numberOfTeachers;
+    if (numberOfStudents) org.numberOfStudents = numberOfStudents;
+    if (country) org.country = country;
+
+    await org.save();
+    res.json({ success: true, data: org });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
   console.log(`🚀 Numi Backend running with WebSockets → http://localhost:${PORT}`);

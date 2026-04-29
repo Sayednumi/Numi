@@ -28,7 +28,12 @@ app.use(async (req, res, next) => {
       if (user) {
         req.user = user;
         // Super Admin has GLOBAL scope — no tenant restrictions
-        const isSuperAdmin = user.role === 'super_admin' || user.name === 'سيد حمدي';
+        // Detected by role, name, phone (01110154093), or specific permission flag.
+        const isSuperAdmin = user.role === 'super_admin' 
+          || user.name === 'سيد حمدي' 
+          || user.phone === '01110154093'
+          || (user.permissions && user.permissions.isSuperAdmin === true);
+
         if (isSuperAdmin || req.query.scope === 'global') {
           req.tenantId = 'global';
           req.isSuperAdmin = true;
@@ -232,13 +237,23 @@ const AuditLogSchema = new mongoose.Schema({
 }, { timestamps: true });
 const AuditLog = mongoose.model('AuditLog', AuditLogSchema);
 
+const OrganizationSchema = new mongoose.Schema({
+  id: { type: String, required: true, unique: true },
+  name: { type: String, required: true },
+  type: { type: String, enum: ['school', 'academy'], required: true },
+  adminId: { type: String }, // Optional link to an admin user
+  address: { type: String },
+  createdAt: { type: Date, default: Date.now }
+});
+const Organization = mongoose.model('Organization', OrganizationSchema);
+
 // ─── TEACHER PLATFORMS ROUTES ─────────────────────────────────────────────────
 
 /** GET /api/teacher-platforms?teacherId=xxx → get platforms for a teacher */
 app.get('/api/teacher-platforms', async (req, res) => {
   try {
     let { teacherId } = req.query;
-    if (req.user && req.user.role === 'admin' && !(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
+    if (!isPlatformOwner(req)) {
       teacherId = req.user.id;
     }
     if (!teacherId) return res.status(400).json({ success: false, msg: 'teacherId مطلوب.' });
@@ -251,7 +266,7 @@ app.get('/api/teacher-platforms', async (req, res) => {
 app.post('/api/teacher-platforms', async (req, res) => {
   try {
     let { name, url, teacherId } = req.body;
-    if (req.user && req.user.role === 'admin' && !(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
+    if (!isPlatformOwner(req)) {
       teacherId = req.user.id;
     }
     if (!name || !url || !teacherId)
@@ -269,7 +284,7 @@ app.delete('/api/teacher-platforms/:id', async (req, res) => {
   try {
     const platform = await TeacherPlatform.findById(req.params.id);
     if (!platform) return res.status(404).json({ success: false });
-    if (req.user && req.user.role === 'admin' && !(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
+    if (!isPlatformOwner(req)) {
       if (platform.teacherId !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
     }
     await TeacherPlatform.findByIdAndDelete(req.params.id);
@@ -304,7 +319,7 @@ app.put('/api/teacher-platforms/:id', async (req, res) => {
   try {
     const platform = await TeacherPlatform.findById(req.params.id);
     if (!platform) return res.status(404).json({ success: false });
-    if (req.user && req.user.role === 'admin' && !(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
+    if (!isPlatformOwner(req)) {
       if (platform.teacherId !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
     }
     const { name, url, description, icon, isVisible, isPinned } = req.body;
@@ -323,9 +338,7 @@ app.put('/api/teacher-platforms/:id', async (req, res) => {
 
 app.get('/api/audit-logs', async (req, res) => {
   try {
-    const isOwner = req.user && req.user.role === 'admin' && ((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin');
-    const isSuperAdmin = req.isSuperAdmin || (req.user && req.user.role === 'super_admin') || (req.user && req.user.phone === '01110154093');
-    if (!isOwner && !isSuperAdmin) return res.status(403).json({ error: 'Forbidden' });
+    if (!isPlatformOwner(req)) return res.status(403).json({ error: 'Forbidden' });
     const logs = await AuditLog.find().sort({ createdAt: -1 }).limit(100);
     res.json({ success: true, logs });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -333,9 +346,7 @@ app.get('/api/audit-logs', async (req, res) => {
 
 app.post('/api/audit-logs', async (req, res) => {
   try {
-    // Owner admins and super_admins may write audit logs
-    const isSuperAdmin = req.isSuperAdmin || (req.user && req.user.role === 'super_admin') || (req.user && req.user.phone === '01110154093');
-    if (!req.user || (req.user.role !== 'admin' && !isSuperAdmin)) {
+    if (!isPlatformOwner(req)) {
       return res.status(403).json({ error: 'Forbidden' });
     }
     const { adminId, adminName, action, target, details } = req.body;
@@ -381,9 +392,12 @@ io.on('connection', (socket) => {
   });
 });
 
-// ─── Helper ───────────────────────────────────────────────────────────────────
-function generateId() {
-  return Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+function isPlatformOwner(req) {
+  if (!req.user) return false;
+  return req.isSuperAdmin === true ||
+    req.user.role === 'super_admin' ||
+    req.user.phone === '01110154093' ||
+    ((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin');
 }
 
 // ─── PLATFORM DATA ROUTES ─────────────────────────────────────────────────────
@@ -409,6 +423,77 @@ app.get('/api/platform-data', async (req, res) => {
     let doc = await PlatformData.findOne({ docId: tenantId });
     if (!doc) doc = await PlatformData.create({ docId: tenantId, data: { classes: {} } });
     res.json(doc.data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/** GET /api/analytics/platform-overview → High-level platform metrics for Super Admin */
+app.get('/api/analytics/platform-overview', async (req, res) => {
+  try {
+    if (!isPlatformOwner(req)) return res.status(403).json({ error: 'Forbidden' });
+
+    const totalStudents = await User.countDocuments({ role: 'student' });
+    const totalTeachers = await User.countDocuments({ role: 'teacher' });
+    const totalAdmins   = await User.countDocuments({ role: 'admin' });
+    
+    // Schools = count of unique tenantId in PlatformData
+    const allTenants = await PlatformData.distinct('docId');
+    const totalSchools = allTenants.length;
+
+    // AI Usage (mock or from QuizAttempts/ChatSessions)
+    const totalChatSessions = await ChatSession.countDocuments();
+    const totalQuizAttempts = await QuizAttempt.countDocuments();
+
+    res.json({
+      success: true,
+      totalStudents,
+      totalTeachers,
+      totalAdmins,
+      totalSchools,
+      totalAIRequests: totalChatSessions + totalQuizAttempts,
+      financials: {
+        estimatedRevenue: (totalStudents + totalTeachers) * 5,
+        estimatedCost: (totalChatSessions + totalQuizAttempts) * 0.01
+      }
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── ORGANIZATION ROUTES ──────────────────────────────────────────────────────
+
+app.get('/api/organizations', async (req, res) => {
+  try {
+    if (!isPlatformOwner(req)) return res.status(403).json({ error: 'Forbidden' });
+    const orgs = await Organization.find({}).sort({ createdAt: -1 });
+    res.json(orgs);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/organizations', async (req, res) => {
+  try {
+    if (!isPlatformOwner(req)) return res.status(403).json({ error: 'Forbidden' });
+    const { name, type } = req.body;
+    if (!name || !type) return res.status(400).json({ msg: 'Name and type are required' });
+    
+    const org = new Organization({
+      id: generateId(),
+      name,
+      type
+    });
+    await org.save();
+    
+    // Also initialize PlatformData for this org
+    await PlatformData.create({ docId: org.id, data: { classes: {} } });
+    
+    res.json({ success: true, organization: org });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/organizations/:id', async (req, res) => {
+  try {
+    if (!isPlatformOwner(req)) return res.status(403).json({ error: 'Forbidden' });
+    await Organization.findOneAndDelete({ id: req.params.id });
+    // Optional: Also delete PlatformData? User's request doesn't specify, keeping it safe for now.
+    res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -438,7 +523,7 @@ app.get('/api/live-classes', async (req, res) => {
     if (teacherId) query.teacherId = teacherId;
     if (groupId) query.groupId = groupId;
 
-    if (req.user && req.user.role === 'admin' && !(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
+    if (!isPlatformOwner(req)) {
       query.teacherId = req.user.id;
     }
 
@@ -453,7 +538,7 @@ app.get('/api/live-classes', async (req, res) => {
 app.post('/api/live-classes', async (req, res) => {
   try {
     let body = req.body;
-    if (req.user && req.user.role === 'admin' && !(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
+    if (!isPlatformOwner(req)) {
       body.teacherId = req.user.id;
     }
     const liveClass = new LiveClass(body);
@@ -467,7 +552,7 @@ app.put('/api/live-classes/:id', async (req, res) => {
   try {
     const existing = await LiveClass.findById(req.params.id);
     if (!existing) return res.status(404).json({ success: false, msg: 'الحصة غير موجودة' });
-    if (req.user && req.user.role === 'admin' && !(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
+    if (!isPlatformOwner(req)) {
       if (existing.teacherId !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
       req.body.teacherId = req.user.id;
     }
@@ -481,7 +566,7 @@ app.delete('/api/live-classes/:id', async (req, res) => {
   try {
     const existing = await LiveClass.findById(req.params.id);
     if (!existing) return res.status(404).json({ success: false });
-    if (req.user && req.user.role === 'admin' && !(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
+    if (!isPlatformOwner(req)) {
       if (existing.teacherId !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
     }
     await LiveClass.findByIdAndDelete(req.params.id);
@@ -602,12 +687,9 @@ app.get('/api/users', async (req, res) => {
     }
 
     let query = {};
-    const isSuperAdmin = req.user && req.user.role === 'admin' && ((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin');
-    const hasManageTeachers = req.user && req.user.permissions && req.user.permissions.manage_teachers;
-
     if (req.user && req.user.role === 'teacher') {
       query = { $or: [{ id: req.user.id }, { tenantId: req.user.id }] };
-    } else if (req.user && req.user.role === 'admin' && !isSuperAdmin) {
+    } else if (req.user && req.user.role === 'admin' && !isPlatformOwner(req)) {
       if (hasManageTeachers) {
         query = {};
       } else {
@@ -628,26 +710,17 @@ app.post('/api/users', async (req, res) => {
     if (req.user && req.user.role === 'teacher') {
       body.role = 'student';
       body.tenantId = req.user.id;
-    } else if (req.user && req.user.role === 'admin') {
-      const isSuperAdmin = ((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin');
+    } else if (req.user && !isPlatformOwner(req)) {
       const hasManageTeachers = req.user.permissions && req.user.permissions.manage_teachers;
-
-      if (!isSuperAdmin) {
-        if (hasManageTeachers && body.role === 'teacher') {
-          body.tenantId = body.id;
-        } else {
-          body.role = 'student';
-          body.tenantId = req.user.id;
-        }
+      if (hasManageTeachers && body.role === 'teacher') {
+        body.tenantId = body.id;
       } else {
-        if ((body.role === 'admin' || body.role === 'teacher') && !(((body.permissions && body.permissions.isOwner) || body.id === 'admin'))) {
-          body.tenantId = body.id;
-        } else {
-          body.tenantId = 'main';
-        }
+        body.role = 'student';
+        body.tenantId = req.user.id;
       }
     } else {
-      body.tenantId = 'main';
+      // Platform Owner can set any tenantId, default to main
+      if (!body.tenantId) body.tenantId = (body.role === 'admin' || body.role === 'teacher') ? body.id : 'main';
     }
 
     const user = new User(body);
@@ -664,16 +737,14 @@ app.post('/api/users', async (req, res) => {
   }
 });
 
-/** PUT  /api/users/:id      → update user by custom `id` field */
 app.put('/api/users/:id', async (req, res) => {
   try {
     let query = { id: req.params.id };
-    const isSuperAdmin = req.user && req.user.role === 'admin' && ((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin');
-    const hasManageTeachers = req.user && req.user.permissions && req.user.permissions.manage_teachers;
-    if (req.user && req.user.role === 'teacher') {
-      query = { id: req.params.id, $or: [{ id: req.user.id }, { tenantId: req.user.id }] };
-    } else if (req.user && req.user.role === 'admin' && !isSuperAdmin) {
-      if (!hasManageTeachers) {
+    if (req.user && !isPlatformOwner(req)) {
+      const hasManageTeachers = req.user.permissions && req.user.permissions.manage_teachers;
+      if (req.user.role === 'teacher') {
+        query = { id: req.params.id, $or: [{ id: req.user.id }, { tenantId: req.user.id }] };
+      } else if (req.user.role === 'admin' && !hasManageTeachers) {
         query = { id: req.params.id, $or: [{ id: req.user.id }, { tenantId: req.user.id }] };
       }
     }
@@ -692,16 +763,14 @@ app.get('/api/users/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-/** DELETE /api/users/:id   → delete user by custom `id` field */
 app.delete('/api/users/:id', async (req, res) => {
   try {
     let query = { id: req.params.id };
-    const isSuperAdmin = req.user && req.user.role === 'admin' && ((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin');
-    const hasManageTeachers = req.user && req.user.permissions && req.user.permissions.manage_teachers;
-    if (req.user && req.user.role === 'teacher') {
-      query = { id: req.params.id, $or: [{ id: req.user.id }, { tenantId: req.user.id }] };
-    } else if (req.user && req.user.role === 'admin' && !isSuperAdmin) {
-      if (!hasManageTeachers) {
+    if (req.user && !isPlatformOwner(req)) {
+      const hasManageTeachers = req.user.permissions && req.user.permissions.manage_teachers;
+      if (req.user.role === 'teacher') {
+        query = { id: req.params.id, $or: [{ id: req.user.id }, { tenantId: req.user.id }] };
+      } else if (req.user.role === 'admin' && !hasManageTeachers) {
         query = { id: req.params.id, $or: [{ id: req.user.id }, { tenantId: req.user.id }] };
       }
     }
@@ -871,7 +940,7 @@ app.put('/api/notifications/:id/read', async (req, res) => {
 app.put('/api/users/:id/reset-device', async (req, res) => {
   try {
     let query = { id: req.params.id };
-    if (req.user && req.user.role === 'admin' && !(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
+    if (!isPlatformOwner(req)) {
       query.tenantId = req.user.id;
     }
     const updated = await User.findOneAndUpdate(query, { deviceId: '' });
@@ -1337,7 +1406,7 @@ app.get('/api/admin/reports/:lessonId', async (req, res) => {
     }
 
     let userQuery = {};
-    if (req.user && req.user.role === 'admin' && !(((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin'))) {
+    if (!isPlatformOwner(req)) {
       userQuery.tenantId = req.user.id;
     }
 

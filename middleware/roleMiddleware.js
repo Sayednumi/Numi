@@ -9,7 +9,7 @@
  */
 
 const PermissionService = require('../../src/services/PermissionService');
-const { ROLES, PERMISSIONS, buildUserProfile, hasPermission, Guards } = PermissionService;
+const { ROLES, PERMISSIONS, buildUserProfile, hasPermission, Guards, isSuperAdmin } = PermissionService;
 
 /**
  * Middleware: Requires the user to be authenticated (x-user-id header set).
@@ -39,7 +39,7 @@ function requireRole(...roles) {
         const userProfile = req.userProfile || buildUserProfile(req.user);
         req.userProfile = userProfile;
 
-        if (!roles.includes(userProfile.role)) {
+        if (!roles.includes(userProfile.role) && !isSuperAdmin(userProfile)) {
             return res.status(403).json({
                 error: `Access denied. Required role(s): ${roles.join(', ')}. Your role: ${userProfile.role}`
             });
@@ -83,8 +83,8 @@ function enforceTenantIsolation(req, res, next) {
     const userProfile = req.userProfile || buildUserProfile(req.user);
     req.userProfile = userProfile;
 
-    // Owner admin can cross tenants
-    if (userProfile.role === ROLES.ADMIN && userProfile.permissions?.isOwner) {
+    // Owner admin or SUPER ADMIN can cross tenants
+    if (isSuperAdmin(userProfile) || (userProfile.role === ROLES.ADMIN && userProfile.permissions?.isOwner)) {
         return next();
     }
 

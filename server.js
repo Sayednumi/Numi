@@ -27,7 +27,12 @@ app.use(async (req, res, next) => {
       const user = await mongoose.model('User').findOne({ id: userId }).lean();
       if (user) {
         req.user = user;
-        if (user.role === 'admin') {
+        // Super Admin has GLOBAL scope — no tenant restrictions
+        const isSuperAdmin = user.role === 'super_admin' || user.name === 'سيد حمدي';
+        if (isSuperAdmin || req.query.scope === 'global') {
+          req.tenantId = 'global';
+          req.isSuperAdmin = true;
+        } else if (user.role === 'admin') {
           if (((user.permissions && user.permissions.isOwner) || user.id === 'admin')) {
             req.tenantId = req.query.tenantId || 'main';
           } else {
@@ -103,7 +108,7 @@ const UserSchema = new mongoose.Schema({
   name: { type: String, required: true },
   phone: { type: String, unique: true, required: true },
   password: { type: String, default: '' },       // student code / password
-  role: { type: String, default: 'student', enum: ['student', 'admin', 'manager', 'teacher'] },
+  role: { type: String, default: 'student', enum: ['student', 'admin', 'manager', 'teacher', 'super_admin'] },
   tenantId: { type: String, default: 'main' },
   academyId: { type: String, default: null },    // Reserved for future multi-school support
   status: { type: String, default: 'inactive' }, // 'active' | 'inactive' | 'locked'
@@ -319,7 +324,8 @@ app.put('/api/teacher-platforms/:id', async (req, res) => {
 app.get('/api/audit-logs', async (req, res) => {
   try {
     const isOwner = req.user && req.user.role === 'admin' && ((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin');
-    if (!isOwner) return res.status(403).json({ error: 'Forbidden' });
+    const isSuperAdmin = req.isSuperAdmin || (req.user && req.user.role === 'super_admin') || (req.user && req.user.phone === '01110154093');
+    if (!isOwner && !isSuperAdmin) return res.status(403).json({ error: 'Forbidden' });
     const logs = await AuditLog.find().sort({ createdAt: -1 }).limit(100);
     res.json({ success: true, logs });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -327,8 +333,9 @@ app.get('/api/audit-logs', async (req, res) => {
 
 app.post('/api/audit-logs', async (req, res) => {
   try {
-    // Only authenticated admins may write audit logs
-    if (!req.user || req.user.role !== 'admin') {
+    // Owner admins and super_admins may write audit logs
+    const isSuperAdmin = req.isSuperAdmin || (req.user && req.user.role === 'super_admin') || (req.user && req.user.phone === '01110154093');
+    if (!req.user || (req.user.role !== 'admin' && !isSuperAdmin)) {
       return res.status(403).json({ error: 'Forbidden' });
     }
     const { adminId, adminName, action, target, details } = req.body;
@@ -384,6 +391,20 @@ function generateId() {
 /** GET  /api/platform-data  → return the full CMS document */
 app.get('/api/platform-data', async (req, res) => {
   try {
+    // Super Admin: merge ALL tenant documents into one aggregated response
+    if (req.isSuperAdmin || req.query.scope === 'global') {
+      const allDocs = await PlatformData.find({}).lean();
+      const merged = { classes: {}, honorBoard: {} };
+      allDocs.forEach(doc => {
+        if (doc.data && doc.data.classes) {
+          Object.assign(merged.classes, doc.data.classes);
+        }
+        if (doc.data && doc.data.honorBoard) {
+          Object.assign(merged.honorBoard, doc.data.honorBoard);
+        }
+      });
+      return res.json(merged);
+    }
     const tenantId = req.tenantId || 'main';
     let doc = await PlatformData.findOne({ docId: tenantId });
     if (!doc) doc = await PlatformData.create({ docId: tenantId, data: { classes: {} } });
@@ -471,6 +492,12 @@ app.delete('/api/live-classes/:id', async (req, res) => {
 // ─── USER ROUTES ──────────────────────────────────────────────────────────────
 
 /** POST /api/auth/login  → { phone, password } → { success, user } */
+
+// ─── PLATFORM OWNER DEFINITION ────────────────────────────────
+// The holder of this phone number is the absolute platform owner.
+// No permission check should ever block this user.
+const PLATFORM_OWNER_PHONE = '01110154093';
+
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { phone, password, classId, groupId } = req.body;
@@ -480,6 +507,41 @@ app.post('/api/auth/login', async (req, res) => {
     const user = await User.findOne({ phone, password });
     if (!user)
       return res.status(401).json({ success: false, msg: 'بيانات الدخول غير صحيحة.' });
+
+    // ── PLATFORM OWNER OVERRIDE ────────────────────────────────
+    // If this is the platform owner, force super_admin role & full permissions,
+    // regardless of what is stored in the database.
+    if (phone === PLATFORM_OWNER_PHONE) {
+      const { password: _p, deviceId: _d, ...rawUser } = user.toObject();
+      const ownerUser = {
+        ...rawUser,
+        role: 'super_admin',
+        status: 'active',
+        permissions: {
+          isOwner: true,
+          isSuperAdmin: true,
+          // All permission keys = true
+          view_students: true, add_student: true, edit_student: true, delete_student: true,
+          reset_quiz: true, view_structure: true, manage_structure: true, manage_lessons: true,
+          manage_all_groups: true, view_live: true, manage_live: true, view_chat: true,
+          send_chat: true, view_qbank: true, manage_qbank: true, generate_ai: true,
+          view_games: true, manage_games: true, view_teacher_platforms: true,
+          manage_teacher_platforms: true, view_dashboard: true, view_reports: true,
+          manage_teachers: true, manage_admins: true, manage_platform: true,
+          take_quiz: true, view_lesson: true, use_ai_chat: true
+        }
+      };
+
+      // Persist the super_admin role in DB (upsert)
+      await User.findOneAndUpdate(
+        { phone },
+        { role: 'super_admin', status: 'active', permissions: ownerUser.permissions },
+        { new: true }
+      );
+
+      return res.json({ success: true, user: ownerUser });
+    }
+    // ──────────────────────────────────────────────
 
     if (user.status === 'inactive')
       return res.status(403).json({ success: false, msg: 'حسابك غير نشط حالياً. يرجى انتظار تفعيل الحساب من قبل الإدارة.' });
@@ -497,6 +559,7 @@ app.post('/api/auth/login', async (req, res) => {
     res.json({ success: true, user: safeUser });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+
 
 /** POST /api/auth/register → { name, phone, password, classId } → { success, user } */
 app.post('/api/auth/register', async (req, res) => {
@@ -532,6 +595,12 @@ app.post('/api/auth/register', async (req, res) => {
 /** GET  /api/users          → list all users (admin) */
 app.get('/api/users', async (req, res) => {
   try {
+    // Super Admin OR global scope: return ALL users across all tenants
+    if (req.isSuperAdmin || req.query.scope === 'global') {
+      const users = await User.find({}).select('-password -deviceId');
+      return res.json(users);
+    }
+
     let query = {};
     const isSuperAdmin = req.user && req.user.role === 'admin' && ((req.user.permissions && req.user.permissions.isOwner) || req.user.id === 'admin');
     const hasManageTeachers = req.user && req.user.permissions && req.user.permissions.manage_teachers;
@@ -540,7 +609,7 @@ app.get('/api/users', async (req, res) => {
       query = { $or: [{ id: req.user.id }, { tenantId: req.user.id }] };
     } else if (req.user && req.user.role === 'admin' && !isSuperAdmin) {
       if (hasManageTeachers) {
-        query = {}; // allow fetching to filter out later or query for teachers specifically
+        query = {};
       } else {
         query = { $or: [{ id: req.user.id }, { tenantId: req.user.id }] };
       }

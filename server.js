@@ -227,25 +227,133 @@ const LiveClassSchema = new mongoose.Schema({
 }, { timestamps: true });
 const LiveClass = mongoose.model('LiveClass', LiveClassSchema);
 
-// AuditLog
+// AuditLog (Enhanced for SaaS)
 const AuditLogSchema = new mongoose.Schema({
-  adminId: { type: String, required: true },
-  adminName: { type: String, required: true },
   action: { type: String, required: true },
-  target: { type: String, required: true },
-  details: { type: String }
+  performedBy: { type: String, required: true }, // name or ID
+  targetOrganization: { type: String, index: true }, // organizationId
+  details: { type: String },
+  ipAddress: { type: String },
+  userAgent: { type: String }
 }, { timestamps: true });
 const AuditLog = mongoose.model('AuditLog', AuditLogSchema);
+
+// PaymentLog
+const PaymentLogSchema = new mongoose.Schema({
+  organizationId: { type: String, required: true, index: true },
+  amount: { type: Number, required: true },
+  method: { type: String, enum: ['vodafone_cash', 'instapay', 'fawry', 'manual'], required: true },
+  status: { type: String, enum: ['pending', 'verified', 'rejected'], default: 'pending' },
+  transactionId: { type: String, unique: true, sparse: true },
+  verifiedBy: { type: String }, // Admin Name/ID
+  attachmentUrl: { type: String }, // Receipt screenshot if any
+  notes: { type: String }
+}, { timestamps: true });
+const PaymentLog = mongoose.model('PaymentLog', PaymentLogSchema);
+
+// ExemptionLog
+const ExemptionLogSchema = new mongoose.Schema({
+  organizationId: { type: String, required: true, index: true },
+  grantedBy: { type: String, required: true },
+  type: { type: String, enum: ['free_access', 'manual_deal'], required: true },
+  startDate: { type: Date, default: Date.now },
+  endDate: { type: Date, required: true },
+  isActive: { type: Boolean, default: true },
+  reason: { type: String }
+}, { timestamps: true });
+const ExemptionLog = mongoose.model('ExemptionLog', ExemptionLogSchema);
+
+// Helper for Auditing
+async function createAuditLog(req, action, targetOrg, details) {
+  try {
+    const admin = req.user || { name: 'System' };
+    await AuditLog.create({
+      action,
+      performedBy: admin.name || admin.id || 'System',
+      targetOrganization: targetOrg,
+      details,
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent']
+    });
+  } catch (err) {
+    console.error('[Audit] Error creating log:', err.message);
+  }
+}
 
 const OrganizationSchema = new mongoose.Schema({
   id: { type: String, required: true, unique: true },
   name: { type: String, required: true },
   type: { type: String, enum: ['school', 'academy'], required: true },
-  adminId: { type: String }, // Optional link to an admin user
+  adminId: { type: String }, 
   address: { type: String },
+  subscriptionPlan: { type: String, enum: ['free', 'basic', 'pro'], default: 'free' },
+  subscriptionStatus: { type: String, enum: ['active', 'expired', 'trial'], default: 'trial' },
+  subscriptionExpiresAt: { type: Date, default: () => new Date(+new Date() + 30*24*60*60*1000) }, // 30 days trial
+  aiUsageLimitPerMonth: { type: Number, default: 50 },
+  aiUsageCurrentMonth: { type: Number, default: 0 },
   createdAt: { type: Date, default: Date.now }
 });
 const Organization = mongoose.model('Organization', OrganizationSchema);
+
+// ─── SUBSCRIPTION MIDDLEWARE ──────────────────────────────────────────────────
+
+async function checkSubscription(req, res, next) {
+  // Super Admin bypasses ALL checks
+  if (isPlatformOwner(req)) return next();
+
+  try {
+    const tenantId = req.headers['x-tenant-id'] || req.query.tenantId || (req.user && req.user.tenantId) || 'main';
+    const org = await Organization.findOne({ id: tenantId });
+    
+    if (!org) {
+      // If no org entry yet, we might want to allow or block. 
+      // For now, let's allow but with a warning in console
+      console.warn(`[Subscription] No organization record found for tenant: ${tenantId}`);
+      return next();
+    }
+
+    req.organization = org;
+
+    if (org.subscriptionStatus === 'expired' || (org.subscriptionExpiresAt && new Date() > org.subscriptionExpiresAt)) {
+      return res.status(403).json({
+        success: false,
+        message: "تم انتهاء الاشتراك، يرجى التجديد لاستعادة الوصول للميزات الاحترافية.",
+        code: "SUBSCRIPTION_EXPIRED"
+      });
+    }
+
+    next();
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+}
+
+async function checkAIUsage(req, res, next) {
+  if (isPlatformOwner(req)) return next();
+  
+  try {
+    const org = req.organization;
+    if (!org) return next();
+
+    if (org.aiUsageCurrentMonth >= org.aiUsageLimitPerMonth) {
+      return res.status(403).json({
+        success: false,
+        message: "تم استهلاك الحد الشهري للذكاء الاصطناعي لهذه المؤسسة. يرجى الترقية لزيادة الحد.",
+        code: "AI_LIMIT_REACHED"
+      });
+    }
+    next();
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}
+
+async function incrementAIUsage(tenantId) {
+  try {
+    await Organization.findOneAndUpdate(
+      { id: tenantId },
+      { $inc: { aiUsageCurrentMonth: 1 } }
+    );
+  } catch (e) { console.error('[Subscription] Failed to increment AI usage', e); }
+}
 
 // ─── TEACHER PLATFORMS ROUTES ─────────────────────────────────────────────────
 
@@ -445,14 +553,16 @@ app.get('/api/analytics/platform-overview', async (req, res) => {
 
     res.json({
       success: true,
-      totalStudents,
-      totalTeachers,
-      totalAdmins,
-      totalSchools,
-      totalAIRequests: totalChatSessions + totalQuizAttempts,
-      financials: {
-        estimatedRevenue: (totalStudents + totalTeachers) * 5,
-        estimatedCost: (totalChatSessions + totalQuizAttempts) * 0.01
+      data: {
+        totalStudents,
+        totalTeachers,
+        totalAdmins,
+        totalOrganizations: totalSchools,
+        totalAIRequests: totalChatSessions + totalQuizAttempts,
+        financials: {
+          estimatedRevenue: (totalStudents + totalTeachers) * 5,
+          estimatedCost: (totalChatSessions + totalQuizAttempts) * 0.01
+        }
       }
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -464,7 +574,7 @@ app.get('/api/organizations', async (req, res) => {
   try {
     if (!isPlatformOwner(req)) return res.status(403).json({ error: 'Forbidden' });
     const orgs = await Organization.find({}).sort({ createdAt: -1 });
-    res.json(orgs);
+    res.json({ success: true, data: orgs });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -680,24 +790,29 @@ app.post('/api/auth/register', async (req, res) => {
 /** GET  /api/users          → list all users (admin) */
 app.get('/api/users', async (req, res) => {
   try {
+    const { role, scope } = req.query;
+    
     // Super Admin OR global scope: return ALL users across all tenants
-    if (req.isSuperAdmin || req.query.scope === 'global') {
-      const users = await User.find({}).select('-password -deviceId');
-      return res.json(users);
+    if (isPlatformOwner(req) || scope === 'global') {
+      let query = {};
+      if (role) query.role = role;
+      const users = await User.find(query).select('-password -deviceId');
+      return res.json({ success: true, data: users });
     }
 
     let query = {};
+    if (role) query.role = role;
+    
     if (req.user && req.user.role === 'teacher') {
-      query = { $or: [{ id: req.user.id }, { tenantId: req.user.id }] };
+      query = { ...query, $or: [{ id: req.user.id }, { tenantId: req.user.id }] };
     } else if (req.user && req.user.role === 'admin' && !isPlatformOwner(req)) {
-      if (hasManageTeachers) {
-        query = {};
-      } else {
-        query = { $or: [{ id: req.user.id }, { tenantId: req.user.id }] };
+      const hasManageTeachers = req.user.permissions && req.user.permissions.manage_teachers;
+      if (!hasManageTeachers) {
+        query = { ...query, $or: [{ id: req.user.id }, { tenantId: req.user.id }] };
       }
     }
     const users = await User.find(query);
-    res.json(users);
+    res.json({ success: true, data: users });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1086,7 +1201,7 @@ app.post('/api/quiz/attempts/:userId/:lessonId/submit', async (req, res) => {
 });
 
 /** AI Lesson Generator */
-app.post('/api/lesson/generate', async (req, res) => {
+app.post('/api/lesson/generate', checkSubscription, checkAIUsage, async (req, res) => {
   try {
     const { keywords } = req.body;
     if (!keywords) return res.status(400).json({ error: 'Keywords are required.' });
@@ -1216,6 +1331,7 @@ function checkAnswer(btn, isCorrect, qId) {
 
     const reply = completion.choices[0].message.content.trim();
     const html = reply.replace(/^```html|```$/gi, '').trim();
+    await incrementAIUsage(req.organization ? req.organization.id : 'main');
     res.json({ success: true, html });
   } catch (e) {
     console.error('Lesson Gen Error:', e.message);
@@ -1224,7 +1340,7 @@ function checkAnswer(btn, isCorrect, qId) {
 });
 
 /** AI Quiz Generator for Teachers */
-app.post('/api/quiz/generate', async (req, res) => {
+app.post('/api/quiz/generate', checkSubscription, checkAIUsage, async (req, res) => {
   try {
     const { text, language } = req.body;
     if (!text) return res.status(400).json({ error: 'Text is required.' });
@@ -1263,6 +1379,7 @@ app.post('/api/quiz/generate', async (req, res) => {
       response_format: { type: "json_object" }
     });
 
+    await incrementAIUsage(req.organization ? req.organization.id : 'main');
     res.json(JSON.parse(completion.choices[0].message.content));
   } catch (e) {
     console.error('Quiz Gen Error:', e.message);
@@ -1291,7 +1408,7 @@ app.get('/api/chat/history/:userId', async (req, res) => {
 });
 
 // ─── AI CHAT ROUTE ───────────────────────────────────────────────────────────
-app.post('/api/chat', async (req, res) => {
+app.post('/api/chat', checkSubscription, checkAIUsage, async (req, res) => {
   try {
     const { message, history, studentGrade, userId, sessionId } = req.body;
 
@@ -1312,7 +1429,7 @@ app.post('/api/chat', async (req, res) => {
 1️⃣ تلقائيًا، عند استلام السؤال، المنصة تزودك بالصف الدراسي للطالب في المتغير: {student_grade}. تم تزويدك به الآن: ${studentGrade || 'غير محدد'}.
 
 2️⃣ أي سؤال خارج الرياضيات: أجب
-   "أنا متخصص في الرياضيات فقط، لا يمكنني الإجابة على هذا السؤال."
+بأدب: "أنا هنا لمساعدتك في تفوقك في مادة الرياضيات فقط! هل لديك سؤال آخر في المنهج؟"
 
 3️⃣ **شرح السؤال يجب أن يكون تفصيلي جدًا ومنسق بشكل واضح**:
    - كل خطوة في سطر منفصل  
@@ -1346,7 +1463,7 @@ app.post('/api/chat', async (req, res) => {
     ];
 
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4o', // or gpt-4-turbo-preview
+      model: 'gpt-4o',
       messages: messages,
       max_tokens: 1000,
       temperature: 0.7
@@ -1362,6 +1479,7 @@ app.post('/api/chat', async (req, res) => {
       );
     }
 
+    await incrementAIUsage(req.organization ? req.organization.id : 'main');
     res.json({ success: true, reply });
   } catch (e) {
     console.error('OpenAI Error:', e.message);
@@ -1511,7 +1629,163 @@ app.get('/api/quiz-reset-check/:userId/:lessonId', async (req, res) => {
     res.status(500).json({ hasReset: false, error: e.message });
   }
 });
+// ─── FINANCIAL CONTROL CENTER ROUTES ──────────────────────────────────────────
 
+/** 1. Financial Stats (Super Admin) */
+app.get('/api/finance/stats', async (req, res) => {
+  if (!isPlatformOwner(req)) return res.status(403).json({ success: false, message: 'Unauthorized' });
+  try {
+    const totalRevenue = await PaymentLog.aggregate([
+      { $match: { status: 'verified' } },
+      { $group: { _id: null, total: { $sum: '$amount' } } }
+    ]);
+
+    const revenuePerPlan = await Organization.aggregate([
+      { $group: { _id: '$subscriptionPlan', total: { $sum: 1 } } }
+    ]);
+
+    const stats = {
+      totalRevenue: totalRevenue[0]?.total || 0,
+      activeSubs: await Organization.countDocuments({ subscriptionStatus: 'active' }),
+      expiredSubs: await Organization.countDocuments({ subscriptionStatus: 'expired' }),
+      totalExemptions: await ExemptionLog.countDocuments({ isActive: true }),
+      revenuePerPlan: revenuePerPlan
+    };
+
+    res.json({ success: true, data: stats });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/** 2. Payments (Filterable) */
+app.get('/api/finance/payments', async (req, res) => {
+  try {
+    let query = {};
+    if (!isPlatformOwner(req)) {
+      query.organizationId = req.tenantId;
+    } else if (req.query.organizationId) {
+      query.organizationId = req.query.organizationId;
+    }
+
+    if (req.query.status) query.status = req.query.status;
+    if (req.query.method) query.method = req.query.method;
+
+    const payments = await PaymentLog.find(query).sort({ createdAt: -1 }).limit(100);
+    res.json({ success: true, data: payments });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/** 3. Create Payment Request */
+app.post('/api/finance/payments', async (req, res) => {
+  try {
+    const { amount, method, transactionId, notes } = req.body;
+    const organizationId = req.tenantId;
+
+    const payment = await PaymentLog.create({
+      organizationId,
+      amount,
+      method,
+      transactionId,
+      notes
+    });
+
+    await createAuditLog(req, 'PAYMENT_CREATED', organizationId, `Amount: ${amount}, Method: ${method}`);
+    res.json({ success: true, data: payment });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/** 4. Verify Payment (Super Admin Only) */
+app.post('/api/finance/payments/:id/verify', async (req, res) => {
+  if (!isPlatformOwner(req)) return res.status(403).json({ success: false, message: 'Unauthorized' });
+  try {
+    const payment = await PaymentLog.findById(req.params.id);
+    if (!payment) return res.status(404).json({ success: false, message: 'Payment not found' });
+
+    payment.status = 'verified';
+    payment.verifiedBy = req.user.name || req.user.id;
+    await payment.save();
+
+    // Extend subscription for the organization
+    const org = await Organization.findOne({ id: payment.organizationId });
+    if (org) {
+      org.subscriptionStatus = 'active';
+      // Add 30 days to expiry
+      const currentExpiry = (org.subscriptionExpiresAt && org.subscriptionExpiresAt > new Date()) ? org.subscriptionExpiresAt : new Date();
+      org.subscriptionExpiresAt = new Date(currentExpiry.getTime() + 30 * 24 * 60 * 60 * 1000);
+      await org.save();
+    }
+
+    await createAuditLog(req, 'PAYMENT_VERIFIED', payment.organizationId, `Payment ID: ${payment._id}`);
+    res.json({ success: true, data: payment });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/** 5. Reject Payment (Super Admin Only) */
+app.post('/api/finance/payments/:id/reject', async (req, res) => {
+  if (!isPlatformOwner(req)) return res.status(403).json({ success: false, message: 'Unauthorized' });
+  try {
+    const { reason } = req.body;
+    const payment = await PaymentLog.findById(req.params.id);
+    if (!payment) return res.status(404).json({ success: false, message: 'Payment not found' });
+
+    payment.status = 'rejected';
+    payment.notes = (payment.notes || '') + ` | Rejected: ${reason}`;
+    await payment.save();
+
+    await createAuditLog(req, 'PAYMENT_REJECTED', payment.organizationId, `Reason: ${reason}`);
+    res.json({ success: true, data: payment });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/** 6. Exemptions */
+app.get('/api/finance/exemptions', async (req, res) => {
+  if (!isPlatformOwner(req)) return res.status(403).json({ success: false, message: 'Unauthorized' });
+  try {
+    const exemptions = await ExemptionLog.find().sort({ createdAt: -1 });
+    res.json({ success: true, data: exemptions });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/finance/exemptions', async (req, res) => {
+  if (!isPlatformOwner(req)) return res.status(403).json({ success: false, message: 'Unauthorized' });
+  try {
+    const { organizationId, type, endDate, reason } = req.body;
+    
+    // Deactivate previous exemptions for this org
+    await ExemptionLog.updateMany({ organizationId, isActive: true }, { isActive: false });
+
+    const exemption = await ExemptionLog.create({
+      organizationId,
+      grantedBy: req.user.name || req.user.id,
+      type,
+      endDate,
+      reason
+    });
+
+    // Update organization status
+    const org = await Organization.findOne({ id: organizationId });
+    if (org) {
+      org.subscriptionStatus = 'active'; 
+      org.subscriptionExpiresAt = new Date(endDate);
+      await org.save();
+    }
+
+    await createAuditLog(req, 'EXEMPTION_GRANTED', organizationId, `Type: ${type}, Reason: ${reason}`);
+    res.json({ success: true, data: exemption });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/** 7. Audit Logs Viewer */
+app.get('/api/finance/audit', async (req, res) => {
+  if (!isPlatformOwner(req)) return res.status(403).json({ success: false, message: 'Unauthorized' });
+  try {
+    let query = {};
+    if (req.query.organizationId) query.targetOrganization = req.query.organizationId;
+    if (req.query.action) query.action = req.query.action;
+
+    const logs = await AuditLog.find(query).sort({ createdAt: -1 }).limit(200);
+    res.json({ success: true, data: logs });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
   console.log(`🚀 Numi Backend running with WebSockets → http://localhost:${PORT}`);

@@ -143,6 +143,16 @@ const UserSchema = new mongoose.Schema({
   subject:        { type: String, default: null },           // Self-selected subject (teacher/student)
   subjectSource:  { type: String, default: 'default', enum: ['manager', 'teacher', 'default'] },
   managerSubject: { type: String, default: null },           // Manager-assigned override (highest priority)
+  
+  // Student Intelligence & Adaptive Learning Profile
+  learningProfile: {
+    performanceLevel: { type: String, enum: ['weak', 'average', 'advanced'], default: 'average' },
+    weakTopics:       { type: [String], default: [] },
+    strongTopics:     { type: [String], default: [] },
+    lastAnalysisAt:   { type: Date },
+    recommendations:  { type: [mongoose.Schema.Types.Mixed], default: [] },
+    aiInteractionScore: { type: Number, default: 0 }
+  }
 }, { timestamps: true });
 const User = mongoose.model('User', UserSchema);
 
@@ -154,6 +164,18 @@ const ChatSessionSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now, index: { expires: '15d' } }
 }, { timestamps: true });
 const ChatSession = mongoose.model('ChatSession', ChatSessionSchema);
+
+// AILog: track AI teacher interactions for analytics
+const AILogSchema = new mongoose.Schema({
+  tenantId: { type: String, required: true, index: true },
+  studentId: { type: String, required: true },
+  question: { type: String, required: true },
+  answer: { type: String, required: true },
+  topics: { type: [String], default: [] },
+  grade: { type: String },
+  timestamp: { type: Date, default: Date.now }
+}, { timestamps: true });
+const AILog = mongoose.model('AILog', AILogSchema);
 
 // QuizAttempt: tracking student quiz sessions
 const QuizAttemptSchema = new mongoose.Schema({
@@ -327,7 +349,15 @@ const OrganizationSchema = new mongoose.Schema({
     firstAIUsageAt: { type: Date }
   },
   lastActivityAt: { type: Date, default: Date.now },
-  createdAt: { type: Date, default: Date.now }
+  createdAt: { type: Date, default: Date.now },
+  
+  // AI Teacher Engine Config
+  aiTeacherConfig: {
+    enabled: { type: Boolean, default: true },
+    strictMode: { type: Boolean, default: true },
+    personality: { type: String, default: 'professional' }, // professional | friendly | creative
+    customInstructions: { type: String, default: '' }
+  }
 });
 const Organization = mongoose.model('Organization', OrganizationSchema);
 
@@ -384,13 +414,19 @@ async function checkAIUsage(req, res, next) {
 
 async function incrementAIUsage(tenantId) {
   try {
-    await Organization.updateOne(
-      { id: tenantId },
-      { $inc: { aiUsageCurrentMonth: 1 }, $set: { lastActivityAt: new Date() } }
-    );
+    await Organization.updateOne({ id: tenantId }, { $inc: { aiUsageCurrentMonth: 1 } });
     updateActivationMetric(tenantId, 'firstAIUsageAt');
   } catch (err) { console.error('[Subscription] Failed to increment AI usage', err); }
 }
+
+/** Update AI Config for Organization */
+app.post('/api/organizations/:id/ai-config', async (req, res) => {
+  try {
+    const { aiTeacherConfig } = req.body;
+    await Organization.updateOne({ id: req.params.id }, { $set: { aiTeacherConfig } });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 // ─── TEACHER PLATFORMS ROUTES ─────────────────────────────────────────────────
 
@@ -1219,25 +1255,23 @@ app.put('/api/quiz/attempts/:userId/:lessonId/sync', async (req, res) => {
 /** POST Submit attempt */
 app.post('/api/quiz/attempts/:userId/:lessonId/submit', async (req, res) => {
   try {
-    const { score, answers, deviceId } = req.body;
-    // Find the latest pending attempt
-    const attempt = await QuizAttempt.findOne({
-      userId: req.params.userId,
-      lessonId: req.params.lessonId,
-      status: 'in-progress'
-    }).sort({ attemptNum: -1 });
+    const { userId, lessonId } = req.params;
+    const { score, answers, deviceId, attemptNum } = req.body;
+    // Support multi-subject analytics
+    const subject = req.query.subject || 'math';
+    await QuizAttempt.updateOne(
+      { userId, lessonId, attemptNum },
+      { $set: { status: 'completed', score, answers, endTime: new Date(), remainingTime: 0 } }
+    );
 
-    if (!attempt) return res.json({ success: false });
-    if (attempt.deviceId && attempt.deviceId !== deviceId) return res.status(403).json({ error: 'DeviceMismatch' });
+    // AI Intelligence Feedback Loop: Analyze student performance after each quiz
+    analyzeStudentPerformance(userId);
 
-    attempt.score = score;
-    attempt.answers = answers;
-    attempt.status = 'completed';
-    attempt.endTime = new Date();
-    attempt.remainingTime = 0;
-    await attempt.save();
-    res.json({ success: true, attempt });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    res.json({ success: true, score });
+  } catch (e) {
+    console.error('Submit Quiz Error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 /** AI Lesson Generator */
@@ -1440,10 +1474,108 @@ app.post('/api/chat/session/new', async (req, res) => {
 });
 
 /** Get all previous sessions for a user */
-app.get('/api/chat/history/:userId', async (req, res) => {
+app.get('/api/chat/sessions/:userId', async (req, res) => {
   try {
-    const sessions = await ChatSession.find({ userId: req.params.userId }).sort({ createdAt: -1 });
+    const sessions = await ChatSession.find({ userId: req.params.userId }).sort({ updatedAt: -1 });
     res.json(sessions);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/** AI Teacher Logs for Analytics */
+app.get('/api/analytics/ai-logs', async (req, res) => {
+  try {
+    const { tenantId } = req.query;
+    const logs = await AILog.find({ tenantId }).sort({ createdAt: -1 }).limit(50);
+    res.json(logs);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── STUDENT INTELLIGENCE ENGINE ─────────────────────────────────────────────
+
+/** Helper: Analyze student performance and update profile */
+async function analyzeStudentPerformance(userId) {
+  try {
+    const attempts = await QuizAttempt.find({ userId, status: 'completed' }).lean();
+    if (attempts.length === 0) return;
+
+    const topicStats = {}; // lessonId -> { scores: [], title: "" }
+    let totalScoreSum = 0;
+
+    for (const att of attempts) {
+      if (!att.score) continue;
+      const [got, total] = att.score.split('/').map(Number);
+      if (isNaN(got) || !total) continue;
+      
+      const pct = (got / total) * 100;
+      totalScoreSum += pct;
+
+      if (!topicStats[att.lessonId]) topicStats[att.lessonId] = { scores: [], title: "" };
+      topicStats[att.lessonId].scores.push(pct);
+    }
+
+    const avgScore = totalScoreSum / attempts.length;
+    const weakTopics = [];
+    const strongTopics = [];
+
+    for (const lsnId in topicStats) {
+      const avg = topicStats[lsnId].scores.reduce((a,b) => a+b, 0) / topicStats[lsnId].scores.length;
+      if (avg < 50) weakTopics.push(lsnId);
+      else if (avg > 90) strongTopics.push(lsnId);
+    }
+
+    let level = 'average';
+    if (avgScore < 50) level = 'weak';
+    else if (avgScore > 85) level = 'advanced';
+
+    // Simple Recommendation Logic
+    const recommendations = weakTopics.slice(0, 3).map(id => ({
+      type: 'review',
+      lessonId: id,
+      message: 'نوصي بمراجعة هذا الدرس لتقوية مهاراتك فيه.'
+    }));
+
+    await User.updateOne({ id: userId }, {
+      $set: {
+        'learningProfile.performanceLevel': level,
+        'learningProfile.weakTopics': weakTopics,
+        'learningProfile.strongTopics': strongTopics,
+        'learningProfile.lastAnalysisAt': new Date(),
+        'learningProfile.recommendations': recommendations
+      }
+    });
+
+    console.log(`[Intelligence] Profile updated for student: ${userId} (Level: ${level})`);
+  } catch (err) {
+    console.error('[Intelligence] Error analyzing student:', err.message);
+  }
+}
+
+/** Get Student Intelligence Profile */
+app.get('/api/student/intelligence/:userId', async (req, res) => {
+  try {
+    const user = await User.findOne({ id: req.params.userId }).select('learningProfile name role').lean();
+    if (!user) return res.status(404).json({ error: 'Student not found' });
+    res.json(user.learningProfile);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/** Get Class Intelligence Heatmap (Teacher View) */
+app.get('/api/teacher/class-intelligence/:groupId', async (req, res) => {
+  try {
+    const students = await User.find({ groupId: req.params.groupId, role: 'student' }).select('learningProfile id name').lean();
+    
+    const heatmap = {}; // topicId -> count of students weak in it
+    const levelDist = { weak: 0, average: 0, advanced: 0 };
+
+    students.forEach(s => {
+      const lp = s.learningProfile || {};
+      levelDist[lp.performanceLevel || 'average']++;
+      (lp.weakTopics || []).forEach(tid => {
+        heatmap[tid] = (heatmap[tid] || 0) + 1;
+      });
+    });
+
+    res.json({ success: true, levelDist, heatmap, totalStudents: students.length });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1451,50 +1583,81 @@ app.get('/api/chat/history/:userId', async (req, res) => {
 app.post('/api/chat', checkSubscription, checkAIUsage, async (req, res) => {
   try {
     const { message, history, studentGrade, userId, sessionId } = req.body;
+    const tenantId = req.headers['x-tenant-id'] || req.query.tenantId || (req.user && req.user.tenantId) || 'main';
+    const org = req.organization;
 
-    // If sessionId provided, save the USER message first
-    if (sessionId) {
-      await ChatSession.updateOne(
-        { id: sessionId },
-        { $push: { messages: { isUser: true, text: message, timestamp: new Date() } } }
-      );
+    // 1. Check if AI Teacher is enabled for this organization
+    if (org && org.aiTeacherConfig && org.aiTeacherConfig.enabled === false) {
+      return res.status(403).json({ success: false, error: 'المعلم الذكي غير مفعّل لهذه المؤسسة حالياً.' });
     }
 
+    // 2. RETRIEVAL PHASE (RAG Lite)
+    const platformData = await PlatformData.findOne({ docId: 'main' });
+    let knowledgeBaseContext = "";
+    
+    if (platformData && platformData.data && platformData.data.classes) {
+      const tenantContent = [];
+      Object.values(platformData.data.classes).forEach(cls => {
+        if (cls.groups) {
+          Object.values(cls.groups).forEach(grp => {
+            if (grp.courses) {
+              Object.values(grp.courses).forEach(crs => {
+                if (crs.units) {
+                  Object.values(crs.units).forEach(unt => {
+                    if (unt.lessons) {
+                      Object.values(unt.lessons).forEach(lsn => {
+                        if (lsn.tenantId === tenantId) {
+                          tenantContent.push(`[الدرس: ${lsn.title}]\nالمحتوى: ${lsn.content || ''}\nملخص: ${lsn.summary || ''}`);
+                        }
+                      });
+                    }
+                  });
+                }
+              });
+            }
+          });
+        }
+      });
+      knowledgeBaseContext = tenantContent.join('\n\n');
+    }
+
+    // 3. SYSTEM PROMPT CONSTRUCTION
+    const personality = org?.aiTeacherConfig?.personality || 'professional';
+    const strictMode = org?.aiTeacherConfig?.strictMode !== false;
+    
+    // Fetch student learning profile for personalization
+    const student = await User.findOne({ id: userId }).select('learningProfile').lean();
+    const lp = student?.learningProfile || { performanceLevel: 'average', weakTopics: [] };
+
     const systemPrompt = `
-أنت مدرس رياضيات محترف، مساعد لكل طالب على المنصة.
+أنت "المعلم الذكي" الخاص بمنصة "نُـمي" التعليمية. وظيفتك هي مساعدة الطالب بناءً **فقط** على المنهج الدراسي المرفوع من قبل معلمه.
 
-⚡ ملاحظة مهمة: يجب أن تجيب الطالب **من عندك ومن خبرتك**، **بدون الاعتماد على أي ملفات PDF**.  
-لكن الإجابات يجب أن تكون **محدودة تمامًا ضمن منهج الصف الدراسي للطالب**. لا تخرج عن نطاق المنهج للصف الذي يدرسه الطالب.
+---
+📜 **المنهج الدراسي المتاح (Knowledge Base):**
+${knowledgeBaseContext || "لا يوجد محتوى تعليمي مرفوع حالياً."}
+---
 
-1️⃣ تلقائيًا، عند استلام السؤال، المنصة تزودك بالصف الدراسي للطالب في المتغير: {student_grade}. تم تزويدك به الآن: ${studentGrade || 'غير محدد'}.
+👤 **ملف الطالب التعليمي (Student Profile):**
+- مستوى الطالب: [${lp.performanceLevel}]
+- مواضيع يعاني منها: [${lp.weakTopics.join(', ') || 'لا يوجد حالياً'}]
+---
 
-2️⃣ أي سؤال خارج الرياضيات: أجب
-بأدب: "أنا هنا لمساعدتك في تفوقك في مادة الرياضيات فقط! هل لديك سؤال آخر في المنهج؟"
+⚠️ **القواعد الصارمة (Strict Rules):**
+1. ${strictMode ? "أجب **فقط** من المنهج المذكور أعلاه. إذا كان السؤال خارج هذا المحتوى، أجب بوضوح: 'عذراً، هذا الموضوع غير متاح في منهجك الدراسي حالياً'." : "الأولوية للمنهج المذكور أعلاه، ولكن يمكنك المساعدة بشكل عام إذا لزم الأمر."}
+2. لا تبتكر (Hallucinate) أي معلومات غير موجودة في المنهج.
+3. المنصة زودتك بالصف الدراسي للطالب: [${studentGrade || 'غير محدد'}]. كَيّف شرحك ليناسب هذا المستوى.
+4. **التكيف الذكي (Adaptive Learning):**
+   - بما أن مستوى الطالب هو [${lp.performanceLevel}]، فإذا كان "weak"، بسّط المصطلحات جداً وكرر المفاهيم الأساسية.
+   - إذا كان "advanced"، قدم له تحديات رياضية أعمق وأسئلة فكرية مرتبطة بالموضوع.
+5. الشخصية المطلوبة منك: [${personality}].
+6. استخدم تنسيق LaTeX للمعادلات الرياضية.
+7. اجعل الرد منسقاً جداً باستخدام العناوين والنقاط.
 
-3️⃣ **شرح السؤال يجب أن يكون تفصيلي جدًا ومنسق بشكل واضح**:
-   - كل خطوة في سطر منفصل  
-   - رقّم الخطوات (1، 2، 3…)  
-   - ضع عناوين فرعية إذا كان الشرح طويل (مثلاً: **الخطوة 1: التحليل**، **الخطوة 2: الحساب**)  
-   - ضع مسافات بين الخطوات لتسهيل القراءة  
-   - استخدم أمثلة صغيرة داخل الشرح إذا لزم الأمر لتوضيح النقطة  
-
-4️⃣ بعد الانتهاء، اكتب **النتيجة النهائية** في سطر منفصل وواضح.
-
-5️⃣ إذا الطالب لم يفهم الشرح، أعد الشرح بطريقة مختلفة خطوة خطوة، بدون إعطاء الحل النهائي مباشرة.
-
-6️⃣ **حدد لغة الإجابة حسب لغة السؤال**:
-   - إذا كان السؤال بالعربية → أجب بالعربية  
-   - إذا كان السؤال بالإنجليزية → أجب بالإنجليزية
-
-7️⃣ اجعل الرد **مريح للعين، منسق، وسهل المتابعة لكل طالب**.
-
-8️⃣ عند كتابة المعادلات، استخدم تنسيق LaTeX حصراً:
-   - للسطور المنفصلة: استخدم $$ (المعادلة) $$
-   - داخل الجمل: استخدم $ (المعادلة) $
-   - **هام جداً:** لكتابة الأسس (مثل x تربيع)، استخدم $ x^2 $ لتظهر بشكل صحيح (x وعليها 2 صغيرة).
-   - **تحذير:** لا تستخدم أبداً الأقواس المربعة [ ] وحدها ولا تكتب الرموز ككلام عادي؛ استخدم دائماً إشارات الدولار ($) ليتمكن النظام من تحويلها لرموز رياضية احترافية.
+---
+أجب الآن على سؤال الطالب بكل أمانة علمية بناءً على المنهج المتاح.
 `;
 
+    // 4. GENERATION PHASE
     const chatHistory = history || [];
     const messages = [
       { role: 'system', content: systemPrompt },
@@ -1505,13 +1668,13 @@ app.post('/api/chat', checkSubscription, checkAIUsage, async (req, res) => {
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o',
       messages: messages,
-      max_tokens: 1000,
-      temperature: 0.7
+      max_tokens: 1500,
+      temperature: 0.3
     });
 
     const reply = completion.choices[0].message.content;
 
-    // Save BOT message
+    // 5. LOGGING & ANALYTICS
     if (sessionId) {
       await ChatSession.updateOne(
         { id: sessionId },
@@ -1519,10 +1682,18 @@ app.post('/api/chat', checkSubscription, checkAIUsage, async (req, res) => {
       );
     }
 
-    await incrementAIUsage(req.organization ? req.organization.id : 'main');
+    await AILog.create({
+      tenantId,
+      studentId: userId || 'anonymous',
+      question: message,
+      answer: reply,
+      grade: studentGrade
+    });
+
+    await incrementAIUsage(tenantId);
     res.json({ success: true, reply });
   } catch (e) {
-    console.error('OpenAI Error:', e.message);
+    console.error('AI Teacher Engine Error:', e.message);
     res.status(500).json({ success: false, error: 'تعذر التواصل مع المعلم الذكي حالياً.' });
   }
 });

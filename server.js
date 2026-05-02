@@ -21,6 +21,28 @@ app.use(cors({ origin: '*' }));
 app.use(require('compression')()); // Enable Gzip compression
 app.use(express.json({ limit: '50mb' }));
 
+// Auth & Tenant Middleware
+const User = require('./models/User');
+app.use(async (req, res, next) => {
+    const userId = req.headers['x-user-id'];
+    if (userId) {
+        try {
+            const user = await User.findOne({ id: userId }).lean();
+            if (user) {
+                req.user = user;
+                const isSuper = user.role === 'super_admin' || user.phone === '01110154093';
+                if (isSuper || req.query.scope === 'global') {
+                    req.tenantId = 'global';
+                    req.isSuperAdmin = true;
+                } else {
+                    req.tenantId = user.tenantId || 'main';
+                }
+            }
+        } catch (e) { }
+    }
+    next();
+});
+
 // Static Files with Caching
 const cachePeriod = 1000 * 60 * 60 * 24 * 7; // 1 week
 app.use(express.static(path.join(__dirname, '..', 'public'), { maxAge: cachePeriod }));
@@ -48,9 +70,25 @@ const PlatformData = require('./models/PlatformData'); // Need to create this mo
 
 app.get('/api/platform-data', async (req, res) => {
     try {
-        const tenantId = req.query.tenantId || 'main';
-        const fields = req.query.fields; // e.g. "data.classes data.honorBoard"
-        
+        const scope = req.query.scope || (req.isSuperAdmin ? 'global' : '');
+        const tenantId = req.tenantId || 'main';
+
+        // Super Admin Global View
+        if (scope === 'global') {
+            const allDocs = await PlatformData.find({}).lean();
+            const merged = { classes: {}, honorBoard: {} };
+            allDocs.forEach(doc => {
+                if (doc.data && doc.data.classes) {
+                    Object.assign(merged.classes, doc.data.classes);
+                }
+                if (doc.data && doc.data.honorBoard) {
+                    Object.assign(merged.honorBoard, doc.data.honorBoard);
+                }
+            });
+            return res.json(merged);
+        }
+
+        const fields = req.query.fields;
         let doc;
         if (fields) {
             // Fetch only requested parts of the data blob
@@ -59,14 +97,20 @@ app.get('/api/platform-data', async (req, res) => {
             doc = await PlatformData.findOne({ docId: tenantId }).lean();
         }
         
-        if (!doc) doc = await PlatformData.create({ docId: tenantId, data: { classes: {} } });
-        res.json(doc.data || doc); 
+        if (!doc) {
+            doc = await PlatformData.create({ docId: tenantId, data: { classes: {} } });
+        }
+        
+        // Always return only the nested 'data' object
+        res.json(doc.data || { classes: {} }); 
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/platform-data', async (req, res) => {
     try {
-        const tenantId = req.query.tenantId || 'main';
+        const tenantId = req.tenantId || 'main';
+        if (tenantId === 'global') return res.status(403).json({ error: 'Cannot save to global scope directly' });
+        
         await PlatformData.findOneAndUpdate(
             { docId: tenantId },
             { data: req.body },

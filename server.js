@@ -18,19 +18,23 @@ connectDB();
 
 // Middleware
 app.use(cors({ origin: '*' }));
+app.use(require('compression')()); // Enable Gzip compression
 app.use(express.json({ limit: '50mb' }));
 
-// Static Files
-app.use(express.static(path.join(__dirname, '..', 'public')));
-app.use('/src', express.static(path.join(__dirname, '..', 'src')));
+// Static Files with Caching
+const cachePeriod = 1000 * 60 * 60 * 24 * 7; // 1 week
+app.use(express.static(path.join(__dirname, '..', 'public'), { maxAge: cachePeriod }));
+app.use('/src', express.static(path.join(__dirname, '..', 'src'), { maxAge: cachePeriod }));
 
 // Import Routes
 const authRoutes = require('./routes/auth.routes');
 const curriculumRoutes = require('./routes/curriculum.routes');
+const userRoutes = require('./routes/user.routes');
 
 // Use Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/curriculum', curriculumRoutes);
+app.use('/api/users', userRoutes);
 
 // Socket.io Logic (Simplified for now, migrate full logic later)
 io.on('connection', (socket) => {
@@ -61,6 +65,25 @@ app.post('/api/platform-data', async (req, res) => {
             { upsert: true, new: true }
         );
         res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Optimized Audit Logs
+const AuditLog = require('./models/AuditLog'); 
+app.get('/api/audit-logs', async (req, res) => {
+    try {
+        const logs = await AuditLog.find()
+            .sort({ createdAt: -1 })
+            .limit(100)
+            .lean();
+        res.json({ success: true, logs });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/audit-logs', async (req, res) => {
+    try {
+        const log = await AuditLog.create(req.body);
+        res.json({ success: true, log });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { Class } = require('../models/Curriculum');
-const { PermissionService } = require('../../src/services/PermissionService');
+const { PermissionService } = require('../services/PermissionService');
 
 // Middleware to check permissions (simulated for now, should use real middleware)
 const checkPerm = (perm) => (req, res, next) => {

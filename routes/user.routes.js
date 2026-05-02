@@ -8,12 +8,22 @@ const User = require('../models/User');
  */
 router.get('/', async (req, res) => {
     try {
-        const { role, scope, tenantId, page = 1, limit = 50 } = req.query;
+        const { role, scope, tenantId, page = 1, limit = 50, search, status } = req.query;
         let query = {};
 
         if (role) query.role = role;
+        if (status) query.status = status;
         if (scope !== 'global' && tenantId) {
             query.tenantId = tenantId;
+        }
+
+        // Add server-side search logic
+        if (search) {
+            query.$or = [
+                { name: { $regex: search, $options: 'i' } },
+                { phone: { $regex: search, $options: 'i' } },
+                { id: { $regex: search, $options: 'i' } }
+            ];
         }
 
         const skip = (parseInt(page) - 1) * parseInt(limit);

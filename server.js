@@ -47,12 +47,20 @@ io.on('connection', (socket) => {
 const PlatformData = require('./models/PlatformData'); // Need to create this model file
 
 app.get('/api/platform-data', async (req, res) => {
-    // ... logic from server.old.js ...
     try {
         const tenantId = req.query.tenantId || 'main';
-        let doc = await PlatformData.findOne({ docId: tenantId });
+        const fields = req.query.fields; // e.g. "data.classes data.honorBoard"
+        
+        let doc;
+        if (fields) {
+            // Fetch only requested parts of the data blob
+            doc = await PlatformData.findOne({ docId: tenantId }).select(fields).lean();
+        } else {
+            doc = await PlatformData.findOne({ docId: tenantId }).lean();
+        }
+        
         if (!doc) doc = await PlatformData.create({ docId: tenantId, data: { classes: {} } });
-        res.json(doc.data);
+        res.json(doc.data || doc); 
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

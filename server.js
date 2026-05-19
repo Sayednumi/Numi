@@ -139,6 +139,52 @@ app.post('/api/audit-logs', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Missing Honor Board Routes
+app.get('/api/honor-board', async (req, res) => {
+    try {
+        const tenantId = req.tenantId || 'main';
+        const doc = await PlatformData.findOne({ docId: tenantId }).lean();
+        res.json(doc?.data?.honorBoard || {});
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/honor-board', async (req, res) => {
+    try {
+        const tenantId = req.tenantId || 'main';
+        const doc = await PlatformData.findOne({ docId: tenantId });
+        if (doc) {
+            if (!doc.data) doc.data = {};
+            doc.data.honorBoard = req.body;
+            doc.markModified('data');
+            await doc.save();
+        }
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Missing Organization Routes
+const Organization = require('./models/Organization'); // Need to create this
+app.get('/api/organizations/:id', async (req, res) => {
+    try {
+        const org = await Organization.findOne({ id: req.params.id }).lean();
+        if (!org) return res.status(404).json({ error: 'Organization not found' });
+        res.json({ success: true, data: org });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/organizations', async (req, res) => {
+    try {
+        if (!req.isSuperAdmin) return res.status(403).json({ error: 'Forbidden' });
+        const orgs = await Organization.find().sort({ createdAt: -1 }).lean();
+        res.json({ success: true, data: orgs });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// JSON 404 Handler for API
+app.use('/api/*', (req, res) => {
+    res.status(404).json({ error: `API Route not found: ${req.originalUrl}` });
+});
+
 // Start Server
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {

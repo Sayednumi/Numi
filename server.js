@@ -49,14 +49,15 @@ app.use(express.static(path.join(__dirname, '..', 'public'), { maxAge: cachePeri
 app.use('/src', express.static(path.join(__dirname, '..', 'src'), { maxAge: cachePeriod }));
 
 // Import Routes
+const { requireAuth } = require('./middleware/auth');
 const authRoutes = require('./routes/auth.routes');
 const curriculumRoutes = require('./routes/curriculum.routes');
 const userRoutes = require('./routes/user.routes');
 
 // Use Routes
 app.use('/api/auth', authRoutes);
-app.use('/api/curriculum', curriculumRoutes);
-app.use('/api/users', userRoutes);
+app.use('/api/curriculum', requireAuth, curriculumRoutes);
+app.use('/api/users', requireAuth, userRoutes);
 
 // Socket.io Logic (Simplified for now, migrate full logic later)
 io.on('connection', (socket) => {
@@ -68,7 +69,7 @@ io.on('connection', (socket) => {
 // For now, I will include the critical legacy routes to ensure the frontend doesn't break.
 const PlatformData = require('./models/PlatformData'); // Need to create this model file
 
-app.get('/api/platform-data', async (req, res) => {
+app.get('/api/platform-data', requireAuth, async (req, res) => {
     try {
         const scope = req.query.scope || (req.isSuperAdmin ? 'global' : '');
         const tenantId = req.tenantId || 'main';
@@ -106,7 +107,7 @@ app.get('/api/platform-data', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.post('/api/platform-data', async (req, res) => {
+app.post('/api/platform-data', requireAuth, async (req, res) => {
     try {
         const tenantId = req.tenantId || 'main';
         if (tenantId === 'global') return res.status(403).json({ error: 'Cannot save to global scope directly' });
@@ -122,7 +123,7 @@ app.post('/api/platform-data', async (req, res) => {
 
 // Optimized Audit Logs
 const AuditLog = require('./models/AuditLog'); 
-app.get('/api/audit-logs', async (req, res) => {
+app.get('/api/audit-logs', requireAuth, async (req, res) => {
     try {
         const logs = await AuditLog.find()
             .sort({ createdAt: -1 })
@@ -132,7 +133,7 @@ app.get('/api/audit-logs', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.post('/api/audit-logs', async (req, res) => {
+app.post('/api/audit-logs', requireAuth, async (req, res) => {
     try {
         const log = await AuditLog.create(req.body);
         res.json({ success: true, log });
@@ -140,7 +141,7 @@ app.post('/api/audit-logs', async (req, res) => {
 });
 
 // Missing Honor Board Routes
-app.get('/api/honor-board', async (req, res) => {
+app.get('/api/honor-board', requireAuth, async (req, res) => {
     try {
         const tenantId = req.tenantId || 'main';
         const doc = await PlatformData.findOne({ docId: tenantId }).lean();
@@ -148,7 +149,7 @@ app.get('/api/honor-board', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.post('/api/honor-board', async (req, res) => {
+app.post('/api/honor-board', requireAuth, async (req, res) => {
     try {
         const tenantId = req.tenantId || 'main';
         const doc = await PlatformData.findOne({ docId: tenantId });
@@ -164,7 +165,7 @@ app.post('/api/honor-board', async (req, res) => {
 
 // Missing Organization Routes
 const Organization = require('./models/Organization'); // Need to create this
-app.get('/api/organizations/:id', async (req, res) => {
+app.get('/api/organizations/:id', requireAuth, async (req, res) => {
     try {
         const org = await Organization.findOne({ id: req.params.id }).lean();
         if (!org) return res.status(404).json({ error: 'Organization not found' });
@@ -172,13 +173,14 @@ app.get('/api/organizations/:id', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.get('/api/organizations', async (req, res) => {
+app.get('/api/organizations', requireAuth, async (req, res) => {
     try {
         if (!req.isSuperAdmin) return res.status(403).json({ error: 'Forbidden' });
         const orgs = await Organization.find().sort({ createdAt: -1 }).lean();
         res.json({ success: true, data: orgs });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
+
 
 // JSON 404 Handler for API
 app.use('/api/*', (req, res) => {
